@@ -2,17 +2,21 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os"
+
+	"github.com/codecrafters-io/redis-starter-go/parse"
+	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
 func main() {
-	listener, err := net.Listen("tcp", "0.0.0.0:6379")
+	address := "0.0.0.0:6379"
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+	fmt.Printf("Listening at address %s...\n", address)
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
@@ -20,25 +24,37 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
+		fmt.Printf("Accepted connection with %s\n", conn.RemoteAddr())
 		go handleConnection(conn)
 	}
 }
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
+	parser := parse.NewParser(conn)
 	for {
-		buffer := make([]byte, 1024)
-		n, err := conn.Read(buffer)
+		cmd, args, err := parser.ParseCommand()
 		if err != nil {
-			if err != io.EOF {
-				fmt.Println("Error reading input: ", err.Error())
-			}
+			conn.Write(resp.SimpleError{Message: err.Error()}.Serialize())
 			continue
 		}
-		fmt.Printf("Received %d bytes: %q\n", n, buffer[:n])
-		_, err = conn.Write([]byte("+PONG\r\n"))
-		if err != nil {
-			fmt.Println("Error writing output: ", err.Error())
-		}
+		fmt.Printf("Received command %s, arguments %v\n", cmd, args)
+		conn.Write(execute(cmd, args...).Serialize())
 	}
+}
+
+func execute(cmd resp.Command, args ...resp.Type) resp.Type {
+	switch cmd {
+	case resp.Ping:
+		if len(args) == 0 {
+			return resp.String("PONG")
+		}
+		return args[0]
+	case resp.Echo:
+		if len(args) == 0 {
+			return resp.String("")
+		}
+		return args[0]
+	}
+	return resp.SimpleError{Message: "unknown command " + string(cmd)}
 }
