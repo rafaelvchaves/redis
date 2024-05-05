@@ -53,3 +53,9 @@ func (s SimpleError) Serialize() []byte {
 	result = append(result, '\r', '\n')
 	return result
 }
+
+type Null struct{}
+
+func (n Null) Serialize() []byte {
+	return []byte{'_', '\r', '\n'}
+}

@@ -58,6 +58,10 @@ func TestSerialize(t *testing.T) {
 			input: resp.SimpleError{Kind: "WRONGTYPE", Message: "abcd"},
 			want:  []byte("-WRONGTYPE abcd\r\n"),
 		},
+		"null": {
+			input: resp.Null{},
+			want:  []byte("_\r\n"),
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

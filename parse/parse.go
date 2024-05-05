@@ -48,6 +48,10 @@ func (p Parser) ParseCommand() (resp.Command, []resp.Type, error) {
 		return resp.Ping, array[1:], nil
 	case cmd == "ECHO":
 		return resp.Echo, array[1:], nil
+	case cmd == "GET":
+		return resp.Get, array[1:], nil
+	case cmd == "SET":
+		return resp.Set, array[1:], nil
 	}
 	return "", nil, fmt.Errorf("unknown command %s", cmd)
 }
