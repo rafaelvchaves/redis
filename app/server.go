@@ -19,8 +19,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer conn.Close()
-	if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
-		fmt.Println("Error writing bytes: ", err.Error())
-		os.Exit(1)
+
+	for {
+		inputBytes := make([]byte, 128)
+		n, err := conn.Read(inputBytes)
+		if err != nil {
+			fmt.Println("Error reading bytes: ", err.Error())
+			os.Exit(1)
+		}
+		fmt.Printf("Read %d bytes: %q\n", n, string(inputBytes[:n]))
+		if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
+			fmt.Println("Error writing bytes: ", err.Error())
+			os.Exit(1)
+		}
 	}
 }
