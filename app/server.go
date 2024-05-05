@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
@@ -13,24 +14,31 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	conn, err := listener.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
-	defer conn.Close()
-
 	for {
-		inputBytes := make([]byte, 128)
-		n, err := conn.Read(inputBytes)
+		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error reading bytes: ", err.Error())
+			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		fmt.Printf("Read %d bytes: %q\n", n, string(inputBytes[:n]))
-		if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
-			fmt.Println("Error writing bytes: ", err.Error())
-			os.Exit(1)
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	for {
+		buffer := make([]byte, 1024)
+		n, err := conn.Read(buffer)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println("Error reading input: ", err.Error())
+			}
+			continue
+		}
+		fmt.Printf("Received %d bytes: %q\n", n, buffer[:n])
+		_, err = conn.Write([]byte("+PONG\r\n"))
+		if err != nil {
+			fmt.Println("Error writing output: ", err.Error())
 		}
 	}
 }
