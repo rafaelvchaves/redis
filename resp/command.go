@@ -29,3 +29,8 @@ type Get struct {
 type Info struct {
 	Section BulkString
 }
+
+type ReplConfig struct {
+	Key   BulkString
+	Value BulkString
+}

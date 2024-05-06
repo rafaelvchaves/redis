@@ -49,6 +49,8 @@ func main() {
 	fmt.Printf("Listening at address %s...\n", address)
 	defer listener.Close()
 	server := &server{
+		host:  host,
+		port:  *port,
 		cache: &sync.Map{},
 		info: info{
 			replication: replication{
@@ -77,8 +79,45 @@ func (s *server) connectToMaster(host string, port string) {
 		fmt.Println("Error connecting to master: ", err.Error())
 		return
 	}
-	message := resp.Array{resp.BulkString("PING")}
-	conn.Write(message.Serialize())
+	defer conn.Close()
+	parser := parse.NewParser(conn)
+	messages := []resp.Array{
+		{
+			resp.BulkString("PING"),
+		},
+		{
+			resp.BulkString("REPLCONF"),
+			resp.BulkString("listening-port"),
+			resp.BulkString(strconv.Itoa(s.port)),
+		},
+		{
+			resp.BulkString("REPLCONF"),
+			resp.BulkString("capa"),
+			resp.BulkString("psync2"),
+		},
+	}
+	conn.Write(messages[0].Serialize())
+	resp0, err := parser.Parse()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("got ", resp0)
+	conn.Write(messages[1].Serialize())
+	resp1, err := parser.Parse()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("got ", resp1)
+	conn.Write(messages[2].Serialize())
+	resp2, err := parser.Parse()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("got ", resp2)
+
 }
 
 func (s *server) handleConnection(conn net.Conn) {
@@ -106,6 +145,8 @@ type replication struct {
 }
 
 type server struct {
+	host  string
+	port  int
 	cache *sync.Map
 	info  info
 }
@@ -147,6 +188,8 @@ func (s *server) execute(cmd resp.Command) resp.Value {
 		default:
 			return resp.SimpleError{Message: "unknown section"}
 		}
+	case resp.ReplConfig:
+		return resp.String("OK")
 	}
 	return resp.SimpleError{Message: "unknown command"}
 }

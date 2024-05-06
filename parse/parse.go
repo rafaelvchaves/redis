@@ -29,7 +29,7 @@ func NewParser(reader io.Reader) Parser {
 }
 
 func (p Parser) ParseCommand() (resp.Command, error) {
-	t, err := p.parse()
+	t, err := p.Parse()
 	if err != nil {
 		return nil, err
 	}
@@ -94,11 +94,16 @@ func (p Parser) ParseCommand() (resp.Command, error) {
 			return nil, fmt.Errorf("only INFO <section> is supported")
 		}
 		return resp.Info{Section: inputs[1]}, nil
+	case first == "REPLCONF":
+		if len(inputs) < 3 {
+			return nil, fmt.Errorf("expected 2 arguments")
+		}
+		return resp.ReplConfig{Key: inputs[1], Value: inputs[2]}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }
 
-func (p Parser) parse() (resp.Value, error) {
+func (p Parser) Parse() (resp.Value, error) {
 	p.scanner.Scan()
 	switch {
 	case arrayRegex.MatchString(p.scanner.Text()):
@@ -120,7 +125,7 @@ func (p Parser) parseArray() (resp.Array, error) {
 	}
 	result := make(resp.Array, length)
 	for i := range length {
-		element, err := p.parse()
+		element, err := p.Parse()
 		if err != nil {
 			return resp.Array{}, err
 		}
