@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,11 +14,15 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
+var port = flag.Int("port", 6379, "Port to run Redis server on")
+
 func main() {
-	address := "0.0.0.0:6379"
+	flag.Parse()
+	host := "0.0.0.0"
+	address := net.JoinHostPort(host, strconv.Itoa(*port))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		fmt.Println("Failed to bind to port", *port)
 		os.Exit(1)
 	}
 	fmt.Printf("Listening at address %s...\n", address)
