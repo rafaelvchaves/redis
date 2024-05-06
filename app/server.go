@@ -12,6 +12,7 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/optional"
 	"github.com/codecrafters-io/redis-starter-go/parse"
+	"github.com/codecrafters-io/redis-starter-go/random"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
@@ -51,7 +52,8 @@ func main() {
 		cache: &sync.Map{},
 		info: info{
 			replication: replication{
-				role: role,
+				Role:                role,
+				MasterReplicationID: random.AlphaNumeric(40),
 			},
 		},
 	}
@@ -85,7 +87,9 @@ type info struct {
 }
 
 type replication struct {
-	role string `json:"role"`
+	Role                    string `json:"role"`
+	MasterReplicationID     string `json:"master_replid"`
+	MasterReplicationOffset int    `json:"master_repl_offset"`
 }
 
 type server struct {
@@ -146,7 +150,7 @@ func toBulkString(name string, section any) resp.BulkString {
 		value := reflect.ValueOf(section).Field(i)
 		tag := field.Tag.Get("json")
 		if tag != "" {
-			str += tag + ":" + value.String() + "\n"
+			str += tag + ":" + fmt.Sprint(value.Interface()) + "\n"
 		}
 	}
 	return resp.BulkString(str)
