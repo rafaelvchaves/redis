@@ -57,6 +57,9 @@ func main() {
 			},
 		},
 	}
+	if role == "slave" {
+		go server.connectToMaster(*masterHost, masterPort)
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -66,6 +69,16 @@ func main() {
 		fmt.Printf("Accepted connection with %s\n", conn.RemoteAddr())
 		go server.handleConnection(conn)
 	}
+}
+
+func (s *server) connectToMaster(host string, port string) {
+	conn, err := net.Dial("tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		fmt.Println("Error connecting to master: ", err.Error())
+		return
+	}
+	message := resp.Array{resp.BulkString("PING")}
+	conn.Write(message.Serialize())
 }
 
 func (s *server) handleConnection(conn net.Conn) {

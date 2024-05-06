@@ -104,7 +104,7 @@ func (p Parser) parse() (resp.Value, error) {
 	case arrayRegex.MatchString(p.scanner.Text()):
 		return p.parseArray()
 	case stringRegex.MatchString(p.scanner.Text()):
-		matches := arrayRegex.FindStringSubmatch(p.scanner.Text())
+		matches := stringRegex.FindStringSubmatch(p.scanner.Text())
 		return resp.String(matches[1]), nil
 	case bulkStringRegex.MatchString(p.scanner.Text()):
 		return p.parseBulkString()
