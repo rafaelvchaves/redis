@@ -1,10 +1,27 @@
 package resp
 
-type Command string
+import (
+	"time"
 
-const (
-	Ping Command = "PING"
-	Echo Command = "ECHO"
-	Set  Command = "SET"
-	Get  Command = "GET"
+	"github.com/codecrafters-io/redis-starter-go/optional"
 )
+
+type Command any
+
+type Ping struct {
+	Message optional.Value[BulkString]
+}
+
+type Echo struct {
+	Message BulkString
+}
+
+type Set struct {
+	Key   BulkString
+	Value Value
+	TTL   optional.Value[time.Time]
+}
+
+type Get struct {
+	Key BulkString
+}

@@ -5,7 +5,9 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/optional"
 	"github.com/codecrafters-io/redis-starter-go/parse"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
@@ -35,13 +37,13 @@ func (s *server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	parser := parse.NewParser(conn)
 	for {
-		cmd, args, err := parser.ParseCommand()
+		cmd, err := parser.ParseCommand()
 		if err != nil {
 			conn.Write(resp.SimpleError{Message: err.Error()}.Serialize())
 			continue
 		}
-		fmt.Printf("Received command %s, arguments %v\n", cmd, args)
-		conn.Write(s.execute(cmd, args...).Serialize())
+		fmt.Printf("Received command %T%+v\n", cmd, cmd)
+		conn.Write(s.execute(cmd).Serialize())
 	}
 }
 
@@ -49,41 +51,36 @@ type server struct {
 	cache *sync.Map
 }
 
-func (s *server) execute(cmd resp.Command, args ...resp.Type) resp.Type {
-	switch cmd {
+type entry struct {
+	value resp.Value
+	ttl   optional.Value[time.Time]
+}
+
+func (s *server) execute(cmd resp.Command) resp.Value {
+	switch command := cmd.(type) {
 	case resp.Ping:
-		if len(args) == 0 {
-			return resp.String("PONG")
+		if msg, ok := command.Message.Get(); ok {
+			return msg
 		}
-		return args[0]
+		return resp.String("PONG")
 	case resp.Echo:
-		if len(args) == 0 {
-			return resp.String("")
-		}
-		return args[0]
+		return command.Message
 	case resp.Set:
-		if len(args) != 2 {
-			return resp.SimpleError{Message: "expected 2 arguments to SET"}
-		}
-		key, ok := args[0].(resp.BulkString)
-		if !ok {
-			return resp.SimpleError{Message: "expected string key type"}
-		}
-		s.cache.Store(key, args[1])
+		s.cache.Store(command.Key, entry{
+			value: command.Value,
+			ttl:   command.TTL,
+		})
 		return resp.String("OK")
 	case resp.Get:
-		if len(args) != 1 {
-			return resp.SimpleError{Message: "expected 1 argument to GET"}
-		}
-		key, ok := args[0].(resp.BulkString)
+		value, ok := s.cache.Load(command.Key)
 		if !ok {
-			return resp.SimpleError{Message: "expected string key type"}
+			return resp.NullBulkString{}
 		}
-		value, ok := s.cache.Load(key)
-		if !ok {
-			return resp.Null{}
+		entry := value.(entry)
+		if ttl, ok := entry.ttl.Get(); ok && time.Now().After(ttl) {
+			return resp.NullBulkString{}
 		}
-		return value.(resp.Type)
+		return entry.value
 	}
-	return resp.SimpleError{Message: "unknown command " + string(cmd)}
+	return resp.SimpleError{Message: "unknown command"}
 }

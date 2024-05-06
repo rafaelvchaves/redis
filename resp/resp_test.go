@@ -9,7 +9,7 @@ import (
 
 func TestSerialize(t *testing.T) {
 	tests := map[string]struct {
-		input resp.Type
+		input resp.Value
 		want  []byte
 	}{
 		"empty simple string": {

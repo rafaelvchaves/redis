@@ -4,11 +4,11 @@ import (
 	"strconv"
 )
 
-type Type interface {
+type Value interface {
 	Serialize() []byte
 }
 
-type Array []Type
+type Array []Value
 
 func (a Array) Serialize() []byte {
 	result := append([]byte{'*'}, []byte(strconv.Itoa(len(a)))...)
@@ -58,4 +58,10 @@ type Null struct{}
 
 func (n Null) Serialize() []byte {
 	return []byte{'_', '\r', '\n'}
+}
+
+type NullBulkString struct{}
+
+func (n NullBulkString) Serialize() []byte {
+	return []byte{'$', '-', '1', '\r', '\n'}
 }
