@@ -16,9 +16,28 @@ import (
 )
 
 var port = flag.Int("port", 6379, "Port to run Redis server on")
+var masterHost = flag.String("replicaof", "", "Master host to replicate")
+var masterPort string
+
+func parseArgs() {
+	flag.Parse()
+	for i, arg := range os.Args {
+		if arg == "--replicaof" {
+			if i+2 >= len(os.Args) {
+				fmt.Println("host and port must be specified after --replicaof")
+				os.Exit(1)
+			}
+			masterPort = os.Args[i+2]
+		}
+	}
+}
 
 func main() {
-	flag.Parse()
+	parseArgs()
+	role := "master"
+	if *masterHost != "" && masterPort != "" {
+		role = "slave"
+	}
 	host := "0.0.0.0"
 	address := net.JoinHostPort(host, strconv.Itoa(*port))
 	listener, err := net.Listen("tcp", address)
@@ -32,7 +51,7 @@ func main() {
 		cache: &sync.Map{},
 		info: info{
 			replication: replication{
-				role: "master",
+				role: role,
 			},
 		},
 	}
@@ -126,7 +145,6 @@ func toBulkString(name string, section any) resp.BulkString {
 		field := t.Field(i)
 		value := reflect.ValueOf(section).Field(i)
 		tag := field.Tag.Get("json")
-		fmt.Println(field, value, tag)
 		if tag != "" {
 			str += tag + ":" + value.String() + "\n"
 		}
