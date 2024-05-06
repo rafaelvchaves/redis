@@ -25,3 +25,7 @@ type Set struct {
 type Get struct {
 	Key BulkString
 }
+
+type Info struct {
+	Section BulkString
+}

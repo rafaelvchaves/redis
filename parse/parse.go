@@ -89,6 +89,11 @@ func (p Parser) ParseCommand() (resp.Command, error) {
 			}
 		}
 		return set, nil
+	case first == "INFO":
+		if len(inputs) < 2 {
+			return nil, fmt.Errorf("only INFO <section> is supported")
+		}
+		return resp.Info{Section: inputs[1]}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

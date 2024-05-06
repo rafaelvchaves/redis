@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -27,7 +28,14 @@ func main() {
 	}
 	fmt.Printf("Listening at address %s...\n", address)
 	defer listener.Close()
-	server := &server{cache: &sync.Map{}}
+	server := &server{
+		cache: &sync.Map{},
+		info: info{
+			replication: replication{
+				role: "master",
+			},
+		},
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -53,8 +61,17 @@ func (s *server) handleConnection(conn net.Conn) {
 	}
 }
 
+type info struct {
+	replication replication
+}
+
+type replication struct {
+	role string `json:"role"`
+}
+
 type server struct {
 	cache *sync.Map
+	info  info
 }
 
 type entry struct {
@@ -87,6 +104,32 @@ func (s *server) execute(cmd resp.Command) resp.Value {
 			return resp.NullBulkString{}
 		}
 		return entry.value
+	case resp.Info:
+		switch command.Section {
+		case "replication":
+			return toBulkString("# Replication", s.info.replication)
+		default:
+			return resp.SimpleError{Message: "unknown section"}
+		}
 	}
 	return resp.SimpleError{Message: "unknown command"}
+}
+
+func toBulkString(name string, section any) resp.BulkString {
+	t := reflect.TypeOf(section)
+	if t.Kind() != reflect.Struct {
+		return ""
+	}
+	var str string
+	str += name + "\n"
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		value := reflect.ValueOf(section).Field(i)
+		tag := field.Tag.Get("json")
+		fmt.Println(field, value, tag)
+		if tag != "" {
+			str += tag + ":" + value.String() + "\n"
+		}
+	}
+	return resp.BulkString(str)
 }
