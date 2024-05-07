@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"net"
@@ -142,8 +143,18 @@ func (s *server) handleConnection(conn net.Conn) {
 			continue
 		}
 		fmt.Printf("Received command %T%+v\n", cmd, cmd)
-		conn.Write(s.execute(cmd).Serialize())
+		for _, message := range s.execute(cmd) {
+			conn.Write(message.Serialize())
+		}
 	}
+}
+
+func (s *server) state() (string, error) {
+	state, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+	if err != nil {
+		return "", err
+	}
+	return string(state), nil
 }
 
 type info struct {
@@ -168,45 +179,52 @@ type entry struct {
 	ttl   optional.Value[time.Time]
 }
 
-func (s *server) execute(cmd resp.Command) resp.Value {
+func (s *server) execute(cmd resp.Command) []resp.Value {
 	switch command := cmd.(type) {
 	case resp.Ping:
 		if msg, ok := command.Message.Get(); ok {
-			return msg
+			return []resp.Value{msg}
 		}
-		return resp.String("PONG")
+		return []resp.Value{resp.String("PONG")}
 	case resp.Echo:
-		return command.Message
+		return []resp.Value{command.Message}
 	case resp.Set:
 		s.cache.Store(command.Key, entry{
 			value: command.Value,
 			ttl:   command.TTL,
 		})
-		return resp.String("OK")
+		return []resp.Value{resp.String("OK")}
 	case resp.Get:
 		value, ok := s.cache.Load(command.Key)
 		if !ok {
-			return resp.NullBulkString{}
+			return []resp.Value{resp.NullBulkString{}}
 		}
 		entry := value.(entry)
 		if ttl, ok := entry.ttl.Get(); ok && time.Now().After(ttl) {
-			return resp.NullBulkString{}
+			return []resp.Value{resp.NullBulkString{}}
 		}
-		return entry.value
+		return []resp.Value{entry.value}
 	case resp.Info:
 		switch command.Section {
 		case "replication":
-			return toBulkString("# Replication", s.info.replication)
+			return []resp.Value{toBulkString("# Replication", s.info.replication)}
 		default:
-			return resp.SimpleError{Message: "unknown section"}
+			return []resp.Value{resp.SimpleError{Message: "unknown section"}}
 		}
 	case resp.ReplConfig:
-		return resp.String("OK")
+		return []resp.Value{resp.String("OK")}
 	case resp.PSync:
-		response := fmt.Sprintf("FULLRESYNC %s %d", s.info.replication.Role, s.info.replication.MasterReplicationOffset)
-		return resp.String(response)
+		resync := fmt.Sprintf("FULLRESYNC %s %d", s.info.replication.Role, s.info.replication.MasterReplicationOffset)
+		state, err := s.state()
+		if err != nil {
+			return []resp.Value{resp.SimpleError{Message: "failed to encode current state"}}
+		}
+		return []resp.Value{
+			resp.String(resync),
+			resp.RDBFile(state),
+		}
 	}
-	return resp.SimpleError{Message: "unknown command"}
+	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
 
 func toBulkString(name string, section any) resp.BulkString {

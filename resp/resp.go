@@ -65,3 +65,12 @@ type NullBulkString struct{}
 func (n NullBulkString) Serialize() []byte {
 	return []byte{'$', '-', '1', '\r', '\n'}
 }
+
+type RDBFile string
+
+func (r RDBFile) Serialize() []byte {
+	result := append([]byte{'$'}, []byte(strconv.Itoa(len(r)))...)
+	result = append(result, '\r', '\n')
+	result = append(result, []byte(r)...)
+	return result
+}

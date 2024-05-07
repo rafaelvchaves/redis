@@ -62,6 +62,10 @@ func TestSerialize(t *testing.T) {
 			input: resp.Null{},
 			want:  []byte("_\r\n"),
 		},
+		"RDB file": {
+			input: resp.RDBFile("UkVESVMwMDEx+gly"),
+			want:  []byte("$16\r\nUkVESVMwMDEx+gly"),
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
