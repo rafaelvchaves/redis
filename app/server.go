@@ -95,6 +95,11 @@ func (s *server) connectToMaster(host string, port string) {
 			resp.BulkString("capa"),
 			resp.BulkString("psync2"),
 		},
+		{
+			resp.BulkString("PSYNC"),
+			resp.BulkString("?"),
+			resp.BulkString("-1"),
+		},
 	}
 	conn.Write(messages[0].Serialize())
 	resp0, err := parser.Parse()
@@ -117,6 +122,13 @@ func (s *server) connectToMaster(host string, port string) {
 		return
 	}
 	fmt.Println("got ", resp2)
+	conn.Write(messages[3].Serialize())
+	resp3, err := parser.Parse()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("got ", resp3)
 
 }
 
@@ -190,6 +202,9 @@ func (s *server) execute(cmd resp.Command) resp.Value {
 		}
 	case resp.ReplConfig:
 		return resp.String("OK")
+	case resp.PSync:
+		response := fmt.Sprintf("FULLRESYNC %s %d", s.info.replication.Role, s.info.replication.MasterReplicationOffset)
+		return resp.String(response)
 	}
 	return resp.SimpleError{Message: "unknown command"}
 }

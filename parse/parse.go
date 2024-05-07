@@ -99,6 +99,11 @@ func (p Parser) ParseCommand() (resp.Command, error) {
 			return nil, fmt.Errorf("expected 2 arguments")
 		}
 		return resp.ReplConfig{Key: inputs[1], Value: inputs[2]}, nil
+	case first == "PSYNC":
+		if len(inputs) < 3 {
+			return nil, fmt.Errorf("expected 2 arguments")
+		}
+		return resp.PSync{ReplicationID: inputs[1], ReplicationOffset: inputs[2]}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

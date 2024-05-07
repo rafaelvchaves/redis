@@ -34,3 +34,8 @@ type ReplConfig struct {
 	Key   BulkString
 	Value BulkString
 }
+
+type PSync struct {
+	ReplicationID     BulkString
+	ReplicationOffset BulkString
+}
