@@ -26,6 +26,14 @@ func (v Value[T]) Get() (T, bool) {
 	return v.value, v.present
 }
 
+func (v Value[T]) GetOrDefault(defaultVal T) T {
+	if !v.present {
+		return defaultVal
+	}
+	return v.value
+}
+
+// String returns a string representation of the option.
 func (v Value[T]) String() string {
 	if !v.present {
 		return "None"

@@ -28,57 +28,68 @@ func NewParser(reader io.Reader) Parser {
 	return Parser{scanner: bufio.NewScanner(reader)}
 }
 
-func (p Parser) ParseCommand() (resp.Command, error) {
-	t, err := p.Parse()
-	if err != nil {
-		return nil, err
-	}
-	array, ok := t.(resp.Array)
+func Array(value resp.Value) ([]resp.BulkString, error) {
+	array, ok := value.(resp.Array)
 	if !ok {
-		return nil, fmt.Errorf("unexpected type: %T", t)
+		return nil, fmt.Errorf("unexpected type: %T", value)
 	}
 	if len(array) == 0 {
 		return nil, fmt.Errorf("unexpected empty command")
 	}
-	inputs := make([]resp.BulkString, len(array))
+	result := make([]resp.BulkString, len(array))
 	for i, e := range array {
 		str, ok := e.(resp.BulkString)
 		if !ok {
 			return nil, fmt.Errorf("unexpected type: %T", array[0])
 		}
-		inputs[i] = str
+		result[i] = str
 	}
-	first := strings.ToUpper(string(inputs[0]))
-	switch {
-	case first == "PING":
+	return result, nil
+}
+
+func Command(input resp.Array) (resp.Command, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("unexpected empty command")
+	}
+	args := make([]resp.BulkString, len(input))
+	for i, e := range input {
+		str, ok := e.(resp.BulkString)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type: %T", args[0])
+		}
+		args[i] = str
+	}
+	first := strings.ToUpper(string(args[0]))
+	switch first {
+	case "PING":
 		var message optional.Value[resp.BulkString]
-		if len(inputs) >= 2 {
-			message = optional.Some(inputs[1])
+		if len(args) >= 2 {
+			message = optional.Some(args[1])
 		}
 		return resp.Ping{Message: message}, nil
-	case first == "ECHO":
+	case "ECHO":
 		var message resp.BulkString
-		if len(inputs) >= 2 {
-			message = inputs[1]
+		if len(args) >= 2 {
+			message = args[1]
 		}
 		return resp.Echo{Message: message}, nil
-	case first == "GET":
-		if len(inputs) < 2 {
-			return nil, fmt.Errorf("expected at least 2 arguments, got %d", len(inputs))
+	case "GET":
+		if len(args) < 2 {
+			return nil, fmt.Errorf("expected at least 2 arguments, got %d", len(args))
 		}
-		return resp.Get{Key: inputs[1]}, nil
-	case first == "SET":
-		if len(inputs) < 3 {
-			return nil, fmt.Errorf("expected at least 3 arguments, got %d", len(inputs))
+		return resp.Get{Key: args[1]}, nil
+	case "SET":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("expected at least 3 arguments, got %d", len(args))
 		}
-		set := resp.Set{Key: inputs[1], Value: inputs[2]}
-		for i := 3; i < len(inputs); {
-			switch opt := strings.ToUpper(string(inputs[i])); opt {
+		set := resp.Set{Key: args[1], Value: args[2]}
+		for i := 3; i < len(args); {
+			switch opt := strings.ToUpper(string(args[i])); opt {
 			case "PX":
-				if i+1 >= len(inputs) {
+				if i+1 >= len(args) {
 					return nil, fmt.Errorf("PX must be followed by a value")
 				}
-				millis, err := strconv.ParseInt(string(inputs[i+1]), 10, 64)
+				millis, err := strconv.ParseInt(string(args[i+1]), 10, 64)
 				if err != nil {
 					return nil, err
 				}
@@ -89,37 +100,49 @@ func (p Parser) ParseCommand() (resp.Command, error) {
 			}
 		}
 		return set, nil
-	case first == "INFO":
-		if len(inputs) < 2 {
+	case "INFO":
+		if len(args) < 2 {
 			return nil, fmt.Errorf("only INFO <section> is supported")
 		}
-		return resp.Info{Section: inputs[1]}, nil
-	case first == "REPLCONF":
-		if len(inputs) < 3 {
+		return resp.Info{Section: args[1]}, nil
+	case "REPLCONF":
+		if len(args) < 3 {
 			return nil, fmt.Errorf("expected 2 arguments")
 		}
-		return resp.ReplConfig{Key: inputs[1], Value: inputs[2]}, nil
-	case first == "PSYNC":
-		if len(inputs) < 3 {
+		return resp.ReplConfig{Key: args[1], Value: args[2]}, nil
+	case "PSYNC":
+		if len(args) < 3 {
 			return nil, fmt.Errorf("expected 2 arguments")
 		}
-		return resp.PSync{ReplicationID: inputs[1], ReplicationOffset: inputs[2]}, nil
+		var id optional.Value[resp.BulkString]
+		if args[1] != resp.BulkString("?") {
+			id = optional.Some(args[1])
+		}
+		var offset optional.Value[resp.BulkString]
+		if args[2] != resp.BulkString("-1") {
+			id = optional.Some(args[2])
+		}
+		return resp.PSync{
+			ReplicationID:     id,
+			ReplicationOffset: offset,
+		}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }
 
 func (p Parser) Parse() (resp.Value, error) {
 	p.scanner.Scan()
+	text := p.scanner.Text()
 	switch {
-	case arrayRegex.MatchString(p.scanner.Text()):
+	case arrayRegex.MatchString(text):
 		return p.parseArray()
-	case stringRegex.MatchString(p.scanner.Text()):
-		matches := stringRegex.FindStringSubmatch(p.scanner.Text())
+	case stringRegex.MatchString(text):
+		matches := stringRegex.FindStringSubmatch(text)
 		return resp.String(matches[1]), nil
-	case bulkStringRegex.MatchString(p.scanner.Text()):
+	case bulkStringRegex.MatchString(text):
 		return p.parseBulkString()
 	}
-	return nil, fmt.Errorf("no match found: %s", p.scanner.Text())
+	return nil, fmt.Errorf("no match found: %s", text)
 }
 
 func (p Parser) parseArray() (resp.Array, error) {

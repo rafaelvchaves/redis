@@ -36,6 +36,6 @@ type ReplConfig struct {
 }
 
 type PSync struct {
-	ReplicationID     BulkString
-	ReplicationOffset BulkString
+	ReplicationID     optional.Value[BulkString]
+	ReplicationOffset optional.Value[BulkString]
 }

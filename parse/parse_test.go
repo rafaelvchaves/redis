@@ -28,7 +28,11 @@ func TestParse(t *testing.T) {
 				t.Fatalf("buffer.Write: %v", err)
 			}
 			parser := parse.NewParser(&buffer)
-			gotCommand, err := parser.ParseCommand()
+			req, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			gotCommand, err := parse.Command(req.(resp.Array))
 			if err != nil {
 				t.Fatalf("ParseCommand: %v", err)
 			}
