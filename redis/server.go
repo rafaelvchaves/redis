@@ -16,12 +16,13 @@ import (
 )
 
 type Server struct {
-	host     string
-	port     int
-	cache    cache.Map[resp.BulkString, CacheEntry]
-	config   Config
-	master   net.Conn
-	replicas cache.Map[net.Addr, net.Conn]
+	host           string
+	port           int
+	cache          cache.Map[resp.BulkString, CacheEntry]
+	config         Config
+	master         net.Conn
+	replicas       cache.Map[net.Addr, net.Conn]
+	bytesProcessed int
 }
 
 type CacheEntry struct {
@@ -130,6 +131,7 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 	for {
 		input, err := decoder.DecodeArray()
 		if err != nil {
+			fmt.Println(err)
 			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
@@ -141,7 +143,6 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 		}
 		details := cmd.Details()
 		messages := s.execute(cmd, conn)
-		fmt.Println(cmd, details)
 		if details.RequiresReplicaResponse {
 			for _, message := range messages {
 				if _, err := conn.Write(message.Encode()); err != nil {
@@ -149,6 +150,7 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 				}
 			}
 		}
+		s.bytesProcessed += len(input.Encode())
 	}
 }
 
@@ -217,7 +219,7 @@ func (s *Server) replConfig(cmd command.ReplConfig) []resp.Value {
 		response := resp.Array{
 			resp.BulkString("REPLCONF"),
 			resp.BulkString("ACK"),
-			resp.BulkString("0"),
+			resp.BulkString(strconv.Itoa(s.bytesProcessed)),
 		}
 		return []resp.Value{response}
 	case "ACK":

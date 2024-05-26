@@ -32,7 +32,6 @@ var (
 // DecodeArray attempts to decode a RESP array from the input stream.
 func (d Decoder) DecodeArray() (Array, error) {
 	prefix := d.readUntil("\r\n")
-	fmt.Println("prefix:", prefix)
 	return d.decodeArray(prefix)
 }
 
@@ -42,6 +41,9 @@ func (d Decoder) DecodeArray() (Array, error) {
 func (d Decoder) DecodeRDBFile() (RDBFile, error) {
 	prefix := d.readUntil("\r\n")
 	matches := rdbFileRegex.FindStringSubmatch(prefix)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("input does not have RDB file prefix: %s", prefix)
+	}
 	length, err := strconv.Atoi(matches[1])
 	if err != nil {
 		return "", err
@@ -67,6 +69,9 @@ func (d Decoder) Decode() (Value, error) {
 
 func (d Decoder) decodeArray(prefix string) (Array, error) {
 	matches := arrayRegex.FindStringSubmatch(prefix)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("input does not have array prefix: %s", prefix)
+	}
 	length, err := strconv.Atoi(matches[1])
 	if err != nil {
 		return Array{}, err
@@ -84,6 +89,9 @@ func (d Decoder) decodeArray(prefix string) (Array, error) {
 
 func (d Decoder) decodeBulkString(prefix string) (BulkString, error) {
 	matches := bulkStringRegex.FindStringSubmatch(prefix)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("input does not have bulk string prefix: %s", prefix)
+	}
 	length, err := strconv.Atoi(matches[1])
 	if err != nil {
 		return "", err
