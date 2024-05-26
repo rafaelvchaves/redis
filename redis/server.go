@@ -132,7 +132,7 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 		input, err := decoder.DecodeArray()
 		if err != nil {
 			fmt.Println(err)
-			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
+			// conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
 		fmt.Printf("[%s]: received %v from master\n", s.config.Replication.Role, input)
@@ -295,6 +295,7 @@ func (s *Server) connectToMaster() net.Conn {
 
 func (s *Server) sendToMaster(conn net.Conn, values ...resp.Value) {
 	array := resp.Array(values)
+	fmt.Println("array:", array)
 	_, err := conn.Write(array.Encode())
 	if err != nil {
 		fmt.Println(err)
