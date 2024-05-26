@@ -68,12 +68,24 @@ func TestEncode(t *testing.T) {
 			input: resp.RDBFile("UkVESVMwMDEx+gly"),
 			want:  []byte("$16\r\nUkVESVMwMDEx+gly"),
 		},
+		"negative integer": {
+			input: resp.Integer(-42),
+			want:  []byte(":-42\r\n"),
+		},
+		"zero integer": {
+			input: resp.Integer(0),
+			want:  []byte(":0\r\n"),
+		},
+		"positive integer": {
+			input: resp.Integer(1000),
+			want:  []byte(":1000\r\n"),
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := test.input.Encode()
 			if diff := cmp.Diff(test.want, got); diff != "" {
-				t.Errorf("Serialize (-want +got):%s\n", diff)
+				t.Errorf("Encode (-want +got):%s\n", diff)
 			}
 		})
 	}
@@ -103,6 +115,22 @@ func TestDecode(t *testing.T) {
 		"array of bulk strings": {
 			input: "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n",
 			want:  resp.Array{resp.BulkString("hello"), resp.BulkString("world")},
+		},
+		"negative integer": {
+			input: ":-42\r\n",
+			want:  resp.Integer(-42),
+		},
+		"zero integer": {
+			input: ":0\r\n",
+			want:  resp.Integer(0),
+		},
+		"positive integer with plus sign": {
+			input: ":+1000\r\n",
+			want:  resp.Integer(1000),
+		},
+		"positive integer": {
+			input: ":1000\r\n",
+			want:  resp.Integer(1000),
 		},
 	}
 	for name, test := range tests {

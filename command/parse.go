@@ -90,6 +90,19 @@ func Parse(input resp.Array) (Command, error) {
 			ReplicationID:     id,
 			ReplicationOffset: offset,
 		}, nil
+	case "WAIT":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("expected 2 arguments")
+		}
+		replicaCount, err := strconv.Atoi(string(args[1]))
+		if err != nil {
+			return nil, err
+		}
+		millis, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return Wait{ReplicaCount: replicaCount, Timeout: time.Duration(millis) * time.Millisecond}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

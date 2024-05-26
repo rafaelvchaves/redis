@@ -170,6 +170,8 @@ func (s *Server) execute(cmd command.Command, conn net.Conn) []resp.Value {
 		return s.replConfig(req)
 	case command.PSync:
 		return s.psync(req, conn)
+	case command.Wait:
+		return s.wait(req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -244,6 +246,10 @@ func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 		resp.String(resync),
 		resp.RDBFile(state),
 	}
+}
+
+func (s *Server) wait(_ command.Wait) []resp.Value {
+	return []resp.Value{resp.Integer(0)}
 }
 
 func (s *Server) state() (string, error) {

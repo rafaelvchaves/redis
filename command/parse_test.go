@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/command"
 	"github.com/codecrafters-io/redis-starter-go/optional"
@@ -70,6 +71,14 @@ func TestParseCommand(t *testing.T) {
 				resp.BulkString("-1"),
 			},
 			want: command.PSync{},
+		},
+		"WAIT 1 6000": {
+			input: resp.Array{
+				resp.BulkString("WAIT"),
+				resp.BulkString("1"),
+				resp.BulkString("6000"),
+			},
+			want: command.Wait{ReplicaCount: 1, Timeout: 6 * time.Second},
 		},
 	}
 	for name, test := range tests {

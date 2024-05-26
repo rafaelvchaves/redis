@@ -72,3 +72,9 @@ type PSync struct {
 	ReplicationID     optional.Value[resp.BulkString]
 	ReplicationOffset optional.Value[resp.BulkString]
 }
+
+type Wait struct {
+	defaultDetailsImpl
+	ReplicaCount int
+	Timeout      time.Duration
+}

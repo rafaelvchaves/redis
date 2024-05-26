@@ -74,3 +74,12 @@ func (r RDBFile) Encode() []byte {
 	result = append(result, []byte(r)...)
 	return result
 }
+
+type Integer int
+
+func (i Integer) Encode() []byte {
+	result := []byte{':'}
+	result = append(result, []byte(strconv.Itoa(int(i)))...)
+	result = append(result, '\r', '\n')
+	return result
+}

@@ -27,6 +27,7 @@ var (
 	stringRegex     = regexp.MustCompile(`^\+(.*)$`)
 	bulkStringRegex = regexp.MustCompile(`^\$([0-9]+)$`)
 	rdbFileRegex    = regexp.MustCompile(`^\$([0-9]+)$`)
+	integerRegex    = regexp.MustCompile(`^\:(\+|-)?([0-9]+)$`)
 )
 
 // DecodeArray attempts to decode a RESP array from the input stream.
@@ -63,6 +64,8 @@ func (d Decoder) Decode() (Value, error) {
 		return String(prefix[1:]), nil
 	case bulkStringRegex.MatchString(prefix):
 		return d.decodeBulkString(prefix)
+	case integerRegex.MatchString(prefix):
+		return d.decodeInteger(prefix)
 	}
 	return nil, fmt.Errorf("no match found: %v", []byte(prefix))
 }
@@ -99,6 +102,22 @@ func (d Decoder) decodeBulkString(prefix string) (BulkString, error) {
 	result := d.readN(length)
 	d.readUntil("\r\n")
 	return BulkString(result), nil
+}
+
+func (d Decoder) decodeInteger(prefix string) (Integer, error) {
+	matches := integerRegex.FindStringSubmatch(prefix)
+	if len(matches) < 3 {
+		return 0, fmt.Errorf("input does not have integer prefix: %s", prefix)
+	}
+	sign := matches[1]
+	i, err := strconv.ParseInt(matches[2], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if sign == "-" {
+		i = -i
+	}
+	return Integer(i), nil
 }
 
 // readUntil reads until [s], returning the bytes read up to but not including
