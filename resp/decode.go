@@ -32,6 +32,7 @@ var (
 // DecodeArray attempts to decode a RESP array from the input stream.
 func (d Decoder) DecodeArray() (Array, error) {
 	prefix := d.readUntil("\r\n")
+	fmt.Println("prefix:", prefix)
 	return d.decodeArray(prefix)
 }
 

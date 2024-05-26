@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/codecrafters-io/redis-starter-go/command"
+	"github.com/codecrafters-io/redis-starter-go/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
@@ -12,12 +13,63 @@ func TestParseCommand(t *testing.T) {
 		input resp.Array
 		want  command.Command
 	}{
+		"PING": {
+			input: resp.Array{
+				resp.BulkString("PING"),
+			},
+			want: command.Ping{},
+		},
+		"PING banana": {
+			input: resp.Array{
+				resp.BulkString("PING"),
+				resp.BulkString("banana"),
+			},
+			want: command.Ping{Message: optional.Some(resp.BulkString("banana"))},
+		},
 		"ECHO banana": {
 			input: resp.Array{
 				resp.BulkString("ECHO"),
 				resp.BulkString("banana"),
 			},
 			want: command.Echo{Message: resp.BulkString("banana")},
+		},
+		"SET foo 1": {
+			input: resp.Array{
+				resp.BulkString("SET"),
+				resp.BulkString("foo"),
+				resp.BulkString("1"),
+			},
+			want: command.Set{Key: resp.BulkString("foo"), Value: resp.BulkString("1")},
+		},
+		"GET foo": {
+			input: resp.Array{
+				resp.BulkString("GET"),
+				resp.BulkString("foo"),
+			},
+			want: command.Get{Key: resp.BulkString("foo")},
+		},
+		"INFO replication": {
+			input: resp.Array{
+				resp.BulkString("INFO"),
+				resp.BulkString("replication"),
+			},
+			want: command.Info{Section: resp.BulkString("replication")},
+		},
+		"REPLCONF GETACK *": {
+			input: resp.Array{
+				resp.BulkString("REPLCONF"),
+				resp.BulkString("GETACK"),
+				resp.BulkString("*"),
+			},
+			want: command.ReplConfig{Key: "GETACK", Value: "*"},
+		},
+		"PSYNC ? -1": {
+			input: resp.Array{
+				resp.BulkString("PSYNC"),
+				resp.BulkString("?"),
+				resp.BulkString("-1"),
+			},
+			want: command.PSync{},
 		},
 	}
 	for name, test := range tests {

@@ -7,13 +7,28 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
-type Command any
+type Command interface {
+	Details() Details
+}
+
+type Details struct {
+	RequiresReplicaResponse bool
+	PropagateToReplica      bool
+}
+
+type defaultDetailsImpl struct{}
+
+func (d defaultDetailsImpl) Details() Details {
+	return Details{}
+}
 
 type Ping struct {
+	defaultDetailsImpl
 	Message optional.Value[resp.BulkString]
 }
 
 type Echo struct {
+	defaultDetailsImpl
 	Message resp.BulkString
 }
 
@@ -23,11 +38,19 @@ type Set struct {
 	TTL   optional.Value[time.Time]
 }
 
+func (s Set) Details() Details {
+	return Details{
+		PropagateToReplica: true,
+	}
+}
+
 type Get struct {
+	defaultDetailsImpl
 	Key resp.BulkString
 }
 
 type Info struct {
+	defaultDetailsImpl
 	Section resp.BulkString
 }
 
@@ -36,7 +59,16 @@ type ReplConfig struct {
 	Value resp.BulkString
 }
 
+func (r ReplConfig) Details() Details {
+	var result Details
+	if r.Key == "GETACK" {
+		result.RequiresReplicaResponse = true
+	}
+	return result
+}
+
 type PSync struct {
+	defaultDetailsImpl
 	ReplicationID     optional.Value[resp.BulkString]
 	ReplicationOffset optional.Value[resp.BulkString]
 }

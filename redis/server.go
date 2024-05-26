@@ -64,6 +64,25 @@ func (s *Server) Start() {
 		fmt.Println("Failed to bind to port", s.port)
 		os.Exit(1)
 	}
+	go func() {
+		if s.config.Replication.Role == Replica {
+			return
+		}
+		ticker := time.NewTicker(5 * time.Second)
+		for range ticker.C {
+			s.replicas.Range(func(_ net.Addr, conn net.Conn) bool {
+				input := resp.Array{
+					resp.BulkString("REPLCONF"),
+					resp.BulkString("GETACK"),
+					resp.BulkString("*"),
+				}
+				if _, err := conn.Write(input.Encode()); err != nil {
+					fmt.Println(err)
+				}
+				return true
+			})
+		}
+	}()
 	fmt.Printf("Listening at address %s...\n", address)
 	defer listener.Close()
 	for {
@@ -73,22 +92,34 @@ func (s *Server) Start() {
 			continue
 		}
 		fmt.Printf("Accepted connection with %s\n", conn.RemoteAddr())
-		go s.handleConnection(conn)
+		go s.handleClientConnection(conn)
 	}
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *Server) handleClientConnection(conn net.Conn) {
 	defer conn.Close()
 	decoder := resp.NewDecoder(conn)
 	for {
-		req, err := decoder.Decode()
+		input, err := decoder.DecodeArray()
 		if err != nil {
 			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
-		fmt.Printf("[%s]: received %v\n", s.config.Replication.Role, req)
-		for _, message := range s.execute(req, conn) {
-			conn.Write(message.Encode())
+		fmt.Printf("[%s]: received %v\n", s.config.Replication.Role, input)
+		cmd, err := command.Parse(input)
+		if err != nil {
+			fmt.Printf("unknown command %v\n", cmd)
+			continue
+		}
+		details := cmd.Details()
+		messages := s.execute(cmd, conn)
+		for _, message := range messages {
+			if _, err := conn.Write(message.Encode()); err != nil {
+				fmt.Println(err)
+			}
+		}
+		if s.config.Replication.Role == Master && details.PropagateToReplica {
+			s.propagate(input)
 		}
 	}
 }
@@ -97,37 +128,38 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 	defer conn.Close()
 	decoder := resp.NewDecoder(conn)
 	for {
-		req, err := decoder.Decode()
+		input, err := decoder.DecodeArray()
 		if err != nil {
 			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
-		fmt.Printf("[%s]: received %v from master\n", s.config.Replication.Role, req)
-		s.execute(req, conn)
+		fmt.Printf("[%s]: received %v from master\n", s.config.Replication.Role, input)
+		cmd, err := command.Parse(input)
+		if err != nil {
+			fmt.Printf("unknown command %v\n", cmd)
+			continue
+		}
+		details := cmd.Details()
+		messages := s.execute(cmd, conn)
+		fmt.Println(cmd, details)
+		if details.RequiresReplicaResponse {
+			for _, message := range messages {
+				if _, err := conn.Write(message.Encode()); err != nil {
+					fmt.Println(err)
+				}
+			}
+		}
 	}
 }
 
-func (s *Server) execute(req resp.Value, conn net.Conn) []resp.Value {
-	array, ok := req.(resp.Array)
-	if !ok {
-		return []resp.Value{resp.SimpleError{Message: "invalid input format"}}
-	}
-	cmd, err := command.Parse(array)
-	if err != nil {
-		fmt.Printf("unknown command %v\n", cmd)
-		return []resp.Value{resp.SimpleError{Message: err.Error()}}
-	}
+func (s *Server) execute(cmd command.Command, conn net.Conn) []resp.Value {
 	switch req := cmd.(type) {
 	case command.Ping:
 		return s.ping(req)
 	case command.Echo:
 		return s.echo(req)
 	case command.Set:
-		response := s.set(req)
-		if s.config.Replication.Role == Master {
-			s.propagate(array)
-		}
-		return response
+		return s.set(req)
 	case command.Get:
 		return s.get(req)
 	case command.Info:
@@ -179,8 +211,20 @@ func (s *Server) info(req command.Info) []resp.Value {
 	}
 }
 
-func (s *Server) replConfig(_ command.ReplConfig) []resp.Value {
-	return []resp.Value{resp.String("OK")}
+func (s *Server) replConfig(cmd command.ReplConfig) []resp.Value {
+	switch cmd.Key {
+	case "GETACK":
+		response := resp.Array{
+			resp.BulkString("REPLCONF"),
+			resp.BulkString("ACK"),
+			resp.BulkString("0"),
+		}
+		return []resp.Value{response}
+	case "ACK":
+		return nil
+	default:
+		return []resp.Value{resp.String("OK")}
+	}
 }
 
 func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
