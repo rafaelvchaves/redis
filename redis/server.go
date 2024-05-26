@@ -6,11 +6,12 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/cache"
+	"github.com/codecrafters-io/redis-starter-go/command"
 	"github.com/codecrafters-io/redis-starter-go/optional"
-	"github.com/codecrafters-io/redis-starter-go/parse"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
@@ -78,28 +79,30 @@ func (s *Server) Start() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
-	parser := parse.NewParser(conn)
+	decoder := resp.NewDecoder(conn)
 	for {
-		req, err := parser.Parse()
+		req, err := decoder.Decode()
 		if err != nil {
-			conn.Write(resp.SimpleError{Message: err.Error()}.Serialize())
+			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
+		fmt.Printf("[%s]: received %v\n", s.config.Replication.Role, req)
 		for _, message := range s.execute(req, conn) {
-			conn.Write(message.Serialize())
+			conn.Write(message.Encode())
 		}
 	}
 }
 
 func (s *Server) handleMasterConnection(conn net.Conn) {
 	defer conn.Close()
-	parser := parse.NewParser(conn)
+	decoder := resp.NewDecoder(conn)
 	for {
-		req, err := parser.Parse()
+		req, err := decoder.Decode()
 		if err != nil {
-			conn.Write(resp.SimpleError{Message: err.Error()}.Serialize())
+			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
+		fmt.Printf("[%s]: received %v from master\n", s.config.Replication.Role, req)
 		s.execute(req, conn)
 	}
 }
@@ -109,46 +112,46 @@ func (s *Server) execute(req resp.Value, conn net.Conn) []resp.Value {
 	if !ok {
 		return []resp.Value{resp.SimpleError{Message: "invalid input format"}}
 	}
-	cmd, err := parse.Command(array)
+	cmd, err := command.Parse(array)
 	if err != nil {
+		fmt.Printf("unknown command %v\n", cmd)
 		return []resp.Value{resp.SimpleError{Message: err.Error()}}
 	}
-	fmt.Printf("Received command %T%+v\n", cmd, cmd)
 	switch req := cmd.(type) {
-	case resp.Ping:
+	case command.Ping:
 		return s.ping(req)
-	case resp.Echo:
+	case command.Echo:
 		return s.echo(req)
-	case resp.Set:
+	case command.Set:
 		response := s.set(req)
 		if s.config.Replication.Role == Master {
 			s.propagate(array)
 		}
 		return response
-	case resp.Get:
+	case command.Get:
 		return s.get(req)
-	case resp.Info:
+	case command.Info:
 		return s.info(req)
-	case resp.ReplConfig:
+	case command.ReplConfig:
 		return s.replConfig(req)
-	case resp.PSync:
+	case command.PSync:
 		return s.psync(req, conn)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
 
-func (s *Server) ping(req resp.Ping) []resp.Value {
+func (s *Server) ping(req command.Ping) []resp.Value {
 	if msg, ok := req.Message.Get(); ok {
 		return []resp.Value{msg}
 	}
 	return []resp.Value{resp.String("PONG")}
 }
 
-func (s *Server) echo(req resp.Echo) []resp.Value {
+func (s *Server) echo(req command.Echo) []resp.Value {
 	return []resp.Value{req.Message}
 }
 
-func (s *Server) set(req resp.Set) []resp.Value {
+func (s *Server) set(req command.Set) []resp.Value {
 	s.cache.Put(req.Key, CacheEntry{
 		value: req.Value,
 		ttl:   req.TTL,
@@ -156,7 +159,7 @@ func (s *Server) set(req resp.Set) []resp.Value {
 	return []resp.Value{resp.String("OK")}
 }
 
-func (s *Server) get(req resp.Get) []resp.Value {
+func (s *Server) get(req command.Get) []resp.Value {
 	entry, ok := s.cache.Get(req.Key)
 	if !ok {
 		return []resp.Value{resp.NullBulkString{}}
@@ -167,7 +170,7 @@ func (s *Server) get(req resp.Get) []resp.Value {
 	return []resp.Value{entry.value}
 }
 
-func (s *Server) info(req resp.Info) []resp.Value {
+func (s *Server) info(req command.Info) []resp.Value {
 	switch req.Section {
 	case "replication":
 		return []resp.Value{s.config.ToBulkString("replication")}
@@ -176,11 +179,11 @@ func (s *Server) info(req resp.Info) []resp.Value {
 	}
 }
 
-func (s *Server) replConfig(_ resp.ReplConfig) []resp.Value {
+func (s *Server) replConfig(_ command.ReplConfig) []resp.Value {
 	return []resp.Value{resp.String("OK")}
 }
 
-func (s *Server) psync(req resp.PSync, conn net.Conn) []resp.Value {
+func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 	defaultID := resp.BulkString(s.config.Replication.MasterReplicationID)
 	defaultOffset := resp.BulkString(strconv.Itoa(s.config.Replication.MasterReplicationOffset))
 	id := req.ReplicationID.GetOrDefault(resp.BulkString(defaultID))
@@ -214,44 +217,78 @@ func (s *Server) connectToMaster() net.Conn {
 		fmt.Println("Error connecting to master: ", err.Error())
 		return nil
 	}
-	parser := parse.NewParser(conn)
-	messages := []resp.Array{
-		{
-			resp.BulkString("PING"),
-		},
-		{
-			resp.BulkString("REPLCONF"),
-			resp.BulkString("listening-port"),
-			resp.BulkString(strconv.Itoa(s.port)),
-		},
-		{
-			resp.BulkString("REPLCONF"),
-			resp.BulkString("capa"),
-			resp.BulkString("psync2"),
-		},
-		{
-			resp.BulkString("PSYNC"),
-			resp.BulkString("?"),
-			resp.BulkString("-1"),
-		},
-	}
-
-	// Initiate the master-replica handshake.
-	for _, message := range messages {
-		conn.Write(message.Serialize())
-		resp, err := parser.Parse()
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		fmt.Println("got ", resp)
-	}
+	decoder := resp.NewDecoder(conn)
+	s.sendToMaster(conn, resp.BulkString("PING"))
+	s.awaitResponse(decoder, "PONG")
+	s.sendToMaster(conn,
+		resp.BulkString("REPLCONF"),
+		resp.BulkString("listening-port"),
+		resp.BulkString(strconv.Itoa(s.port)),
+	)
+	s.awaitResponse(decoder, "OK")
+	s.sendToMaster(conn,
+		resp.BulkString("REPLCONF"),
+		resp.BulkString("capa"),
+		resp.BulkString("psync2"),
+	)
+	s.awaitResponse(decoder, "OK")
+	s.sendToMaster(conn,
+		resp.BulkString("PSYNC"),
+		resp.BulkString("?"),
+		resp.BulkString("-1"),
+	)
+	s.awaitSync(decoder)
 	return conn
 }
 
+func (s *Server) sendToMaster(conn net.Conn, values ...resp.Value) {
+	array := resp.Array(values)
+	_, err := conn.Write(array.Encode())
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func (s *Server) awaitResponse(decoder resp.Decoder, response string) {
+	got, err := decoder.Decode()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if str := got.(resp.String); str != resp.String(response) {
+		fmt.Printf("expected %v, got %v\n", response, str)
+		os.Exit(1)
+	}
+}
+
+func (s *Server) awaitSync(decoder resp.Decoder) {
+	// The master is expected to first respond with a FULLRESYNC message.
+	// Currently, the replica does not do anything with this.
+	resync, err := decoder.Decode()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if str := resync.(resp.String); !strings.HasPrefix(string(str), "FULLRESYNC") {
+		fmt.Printf("expected string with FULLRESYNC prefix, got %v\n", str)
+		os.Exit(1)
+	}
+
+	// Next, the master sends its contents as a RDB file. The replica
+	// would usually replace its state with the contents of the file.
+	file, err := decoder.DecodeRDBFile()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	fmt.Println("received RDB file:", []byte(file))
+}
+
 func (s *Server) propagate(cmd resp.Array) {
+	fmt.Printf("propagating %v to replicas\n", cmd)
 	s.replicas.Range(func(addr net.Addr, conn net.Conn) bool {
-		if _, err := conn.Write(cmd.Serialize()); err != nil {
+		if _, err := conn.Write(cmd.Encode()); err != nil {
 			fmt.Println(err)
 		}
 		return true

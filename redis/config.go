@@ -31,9 +31,6 @@ func (c Config) ToBulkString(sections ...string) resp.BulkString {
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
 			value := reflect.ValueOf(config).Field(i)
-			// if value.IsZero() {
-			// 	continue
-			// }
 			tag := field.Tag.Get("json")
 			if tag != "" {
 				str += tag + ":" + fmt.Sprint(value.Interface()) + "\n"

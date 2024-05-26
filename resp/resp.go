@@ -5,23 +5,23 @@ import (
 )
 
 type Value interface {
-	Serialize() []byte
+	Encode() []byte
 }
 
 type Array []Value
 
-func (a Array) Serialize() []byte {
+func (a Array) Encode() []byte {
 	result := append([]byte{'*'}, []byte(strconv.Itoa(len(a)))...)
 	result = append(result, '\r', '\n')
 	for _, el := range a {
-		result = append(result, el.Serialize()...)
+		result = append(result, el.Encode()...)
 	}
 	return result
 }
 
 type String string
 
-func (s String) Serialize() []byte {
+func (s String) Encode() []byte {
 	result := append([]byte{'+'}, []byte(s)...)
 	result = append(result, '\r', '\n')
 	return result
@@ -29,7 +29,7 @@ func (s String) Serialize() []byte {
 
 type BulkString string
 
-func (b BulkString) Serialize() []byte {
+func (b BulkString) Encode() []byte {
 	result := append([]byte{'$'}, []byte(strconv.Itoa(len(b)))...)
 	result = append(result, '\r', '\n')
 	result = append(result, []byte(b)...)
@@ -42,7 +42,7 @@ type SimpleError struct {
 	Message string
 }
 
-func (s SimpleError) Serialize() []byte {
+func (s SimpleError) Encode() []byte {
 	kind := s.Kind
 	if kind == "" {
 		kind = "ERR"
@@ -56,19 +56,19 @@ func (s SimpleError) Serialize() []byte {
 
 type Null struct{}
 
-func (n Null) Serialize() []byte {
+func (n Null) Encode() []byte {
 	return []byte{'_', '\r', '\n'}
 }
 
 type NullBulkString struct{}
 
-func (n NullBulkString) Serialize() []byte {
+func (n NullBulkString) Encode() []byte {
 	return []byte{'$', '-', '1', '\r', '\n'}
 }
 
 type RDBFile string
 
-func (r RDBFile) Serialize() []byte {
+func (r RDBFile) Encode() []byte {
 	result := append([]byte{'$'}, []byte(strconv.Itoa(len(r)))...)
 	result = append(result, '\r', '\n')
 	result = append(result, []byte(r)...)
