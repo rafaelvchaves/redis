@@ -18,7 +18,7 @@ type Details struct {
 
 type defaultDetailsImpl struct{}
 
-func (d defaultDetailsImpl) Details() Details {
+func (defaultDetailsImpl) Details() Details {
 	return Details{}
 }
 
@@ -77,4 +77,20 @@ type Wait struct {
 	defaultDetailsImpl
 	ReplicaCount int
 	Timeout      time.Duration
+}
+
+type GetConfig struct {
+	Keys []resp.BulkString
+}
+
+func (GetConfig) Details() Details {
+	return Details{}
+}
+
+type SetConfig struct {
+	Pairs map[resp.BulkString]resp.BulkString
+}
+
+func (SetConfig) Details() Details {
+	return Details{}
 }

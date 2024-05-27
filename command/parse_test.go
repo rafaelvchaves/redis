@@ -7,6 +7,8 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/command"
 	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParseCommand(t *testing.T) {
@@ -80,6 +82,29 @@ func TestParseCommand(t *testing.T) {
 			},
 			want: command.Wait{ReplicaCount: 1, Timeout: 6 * time.Second},
 		},
+		"CONFIG SET key1 value1 key2 value2": {
+			input: resp.Array{
+				resp.BulkString("CONFIG"),
+				resp.BulkString("SET"),
+				resp.BulkString("key1"),
+				resp.BulkString("value1"),
+				resp.BulkString("key2"),
+				resp.BulkString("value2"),
+			},
+			want: command.SetConfig{Pairs: map[resp.BulkString]resp.BulkString{
+				"key1": "value1",
+				"key2": "value2",
+			}},
+		},
+		"CONFIG GET key1 key2": {
+			input: resp.Array{
+				resp.BulkString("CONFIG"),
+				resp.BulkString("GET"),
+				resp.BulkString("key1"),
+				resp.BulkString("key2"),
+			},
+			want: command.GetConfig{Keys: []resp.BulkString{"key1", "key2"}},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -87,9 +112,70 @@ func TestParseCommand(t *testing.T) {
 			if err != nil {
 				t.Fatalf("command.Parse(%v): %v", test.input, err)
 			}
-			if got != test.want {
-				t.Errorf("command.Parse(%v) = %v, want %v", test.input, got, test.want)
+			if diff := cmp.Diff(test.want, got, cmpOpts...); diff != "" {
+				t.Errorf("command.Parse(%v) diff (-want +got):%s\n", test.input, diff)
 			}
 		})
 	}
+}
+
+var cmpOpts = []cmp.Option{
+	compareMaps[resp.BulkString, resp.BulkString](),
+	compareSlices[resp.BulkString](),
+	cmpopts.EquateComparable(
+		command.Ping{},
+		command.Echo{},
+		command.Get{},
+		command.Info{},
+		command.PSync{},
+		command.Wait{},
+	),
+	compareOptions[time.Time](cmp.Comparer((time.Time).Equal)),
+}
+
+func compareMaps[K comparable, V comparable]() cmp.Option {
+	return cmp.Comparer(func(m1, m2 map[K]V) bool {
+		if len(m1) != len(m2) {
+			return false
+		}
+		for key, val1 := range m1 {
+			val2, ok := m2[key]
+			if !ok {
+				return false
+			}
+			if val1 != val2 {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func compareSlices[E comparable]() cmp.Option {
+	return cmp.Comparer(func(s1, s2 []E) bool {
+		if len(s1) != len(s2) {
+			return false
+		}
+		s2Set := make(map[E]bool)
+		for _, v := range s2 {
+			s2Set[v] = true
+		}
+		for _, v := range s1 {
+			if !s2Set[v] {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func compareOptions[T any](opts ...cmp.Option) cmp.Option {
+	return cmp.Comparer(func(o1, o2 optional.Value[T]) bool {
+		v1, ok1 := o1.Get()
+		v2, ok2 := o2.Get()
+		if !ok1 && !ok2 {
+			return true
+		}
+		return cmp.Equal(v1, v2, opts...) && ok1 && ok2
+	})
 }
