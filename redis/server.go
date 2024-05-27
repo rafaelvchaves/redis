@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/command"
@@ -18,13 +20,20 @@ import (
 )
 
 type Server struct {
-	host           string
-	port           int
-	cache          cache.Map[resp.BulkString, CacheEntry]
-	config         Config
-	master         net.Conn
-	replicas       cache.Map[net.Addr, net.Conn]
+	host   string
+	port   int
+	cache  cache.Map[resp.BulkString, CacheEntry]
+	config Config
+	master net.Conn
+	// replicas       cache.Map[net.Addr, replica]
+	replicas       map[net.Addr]replica
 	bytesProcessed int
+}
+
+type replica struct {
+	conn      net.Conn
+	bytesSent *atomic.Int32
+	acks      chan int
 }
 
 type CacheEntry struct {
@@ -52,7 +61,7 @@ func NewServer(params ServerParams) *Server {
 		port:     params.Port,
 		config:   params.Config,
 		cache:    cache.NewTypedSyncMap[resp.BulkString, CacheEntry](),
-		replicas: cache.NewTypedSyncMap[net.Addr, net.Conn](),
+		replicas: make(map[net.Addr]replica),
 	}
 }
 
@@ -74,25 +83,6 @@ func (s *Server) Start() {
 	if err != nil {
 		ctxlog.Fatalf(ctx, "Failed to bind to port %d", s.port)
 	}
-	go func() {
-		if s.config.Replication.Role == Replica {
-			return
-		}
-		ticker := time.NewTicker(5 * time.Second)
-		for range ticker.C {
-			s.replicas.Range(func(_ net.Addr, conn net.Conn) bool {
-				input := resp.Array{
-					resp.BulkString("REPLCONF"),
-					resp.BulkString("GETACK"),
-					resp.BulkString("*"),
-				}
-				if _, err := conn.Write(input.Encode()); err != nil {
-					ctxlog.Errorf(ctx, "conn.Write: %v", err)
-				}
-				return true
-			})
-		}
-	}()
 	ctxlog.Infof(ctx, "Listening at address %s...", address)
 	defer listener.Close()
 	for {
@@ -121,7 +111,7 @@ func (s *Server) handleClientConnection(ctx context.Context, conn net.Conn) {
 			continue
 		}
 		details := cmd.Details()
-		messages := s.execute(cmd, conn)
+		messages := s.execute(ctx, cmd, conn)
 		for _, message := range messages {
 			if _, err := conn.Write(message.Encode()); err != nil {
 				ctxlog.Errorf(ctx, "conn.Write: %v", err)
@@ -147,7 +137,7 @@ func (s *Server) handleMasterConnection(ctx context.Context, conn net.Conn, deco
 			continue
 		}
 		details := cmd.Details()
-		messages := s.execute(cmd, conn)
+		messages := s.execute(ctx, cmd, conn)
 		if details.RequiresReplicaResponse {
 			for _, message := range messages {
 				if _, err := conn.Write(message.Encode()); err != nil {
@@ -159,7 +149,7 @@ func (s *Server) handleMasterConnection(ctx context.Context, conn net.Conn, deco
 	}
 }
 
-func (s *Server) execute(cmd command.Command, conn net.Conn) []resp.Value {
+func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn) []resp.Value {
 	switch req := cmd.(type) {
 	case command.Ping:
 		return s.ping(req)
@@ -172,11 +162,11 @@ func (s *Server) execute(cmd command.Command, conn net.Conn) []resp.Value {
 	case command.Info:
 		return s.info(req)
 	case command.ReplConfig:
-		return s.replConfig(req)
+		return s.replConfig(req, conn)
 	case command.PSync:
 		return s.psync(req, conn)
 	case command.Wait:
-		return s.wait(req)
+		return s.wait(ctx, req, conn)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -220,7 +210,7 @@ func (s *Server) info(req command.Info) []resp.Value {
 	}
 }
 
-func (s *Server) replConfig(cmd command.ReplConfig) []resp.Value {
+func (s *Server) replConfig(cmd command.ReplConfig, conn net.Conn) []resp.Value {
 	switch cmd.Key {
 	case "GETACK":
 		response := resp.Array{
@@ -230,6 +220,8 @@ func (s *Server) replConfig(cmd command.ReplConfig) []resp.Value {
 		}
 		return []resp.Value{response}
 	case "ACK":
+		offset, _ := strconv.Atoi(string(cmd.Value))
+		s.replicas[conn.RemoteAddr()].acks <- offset
 		return nil
 	default:
 		return []resp.Value{resp.String("OK")}
@@ -246,15 +238,55 @@ func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 	if err != nil {
 		return []resp.Value{resp.SimpleError{Message: "failed to encode current state"}}
 	}
-	s.replicas.Put(conn.RemoteAddr(), conn)
+	s.replicas[conn.RemoteAddr()] = replica{conn: conn, bytesSent: &atomic.Int32{}, acks: make(chan int, 3)}
 	return []resp.Value{
 		resp.String(resync),
 		resp.RDBFile(state),
 	}
 }
 
-func (s *Server) wait(_ command.Wait) []resp.Value {
-	return []resp.Value{resp.Integer(s.replicas.Len())}
+func (s *Server) wait(ctx context.Context, req command.Wait, conn net.Conn) []resp.Value {
+	var wg sync.WaitGroup
+	var count atomic.Int32
+	for _, replica := range s.replicas {
+		if replica.bytesSent.Load() == 0 {
+			count.Add(1)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			timer := time.NewTimer(125 * time.Millisecond)
+			defer wg.Done()
+			input := resp.Array{
+				resp.BulkString("REPLCONF"),
+				resp.BulkString("GETACK"),
+				resp.BulkString("*"),
+			}
+			if _, err := replica.conn.Write(input.Encode()); err != nil {
+				ctxlog.Errorf(ctx, "conn.Write: %v", err)
+				return
+			}
+			// Wait for ack.
+			select {
+			case <-replica.acks:
+				count.Add(1)
+			case <-timer.C:
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	timer := time.NewTimer(req.Timeout)
+	var done bool
+	for !done {
+		select {
+		case <-timer.C:
+			done = true
+		default:
+			done = count.Load() >= int32(req.ReplicaCount)
+		}
+	}
+	return []resp.Value{resp.Integer(count.Load())}
 }
 
 func (s *Server) state() (string, error) {
@@ -340,10 +372,11 @@ func (s *Server) awaitSync(ctx context.Context, decoder resp.Decoder) {
 
 func (s *Server) propagate(ctx context.Context, cmd resp.Array) {
 	fmt.Printf("propagating %v to replicas\n", cmd)
-	s.replicas.Range(func(addr net.Addr, conn net.Conn) bool {
-		if _, err := conn.Write(cmd.Encode()); err != nil {
+	for _, replica := range s.replicas {
+		bytes := cmd.Encode()
+		if _, err := replica.conn.Write(bytes); err != nil {
 			ctxlog.Errorf(ctx, "conn.Write: %v", err)
 		}
-		return true
-	})
+		replica.bytesSent.Add(int32(len(bytes)))
+	}
 }

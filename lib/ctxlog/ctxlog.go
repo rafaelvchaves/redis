@@ -17,7 +17,9 @@ func AddKeyPrefix(key any) {
 func prefix(ctx context.Context) string {
 	vals := make([]string, len(keys))
 	for i, key := range keys {
-		vals[i] = ctx.Value(key).(string)
+		if s, ok := ctx.Value(key).(string); ok {
+			vals[i] = s
+		}
 	}
 	return "[" + strings.Join(vals, " ") + "]"
 }
