@@ -10,13 +10,17 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/redis"
 )
 
-var port = flag.Int("port", 6379, "Port to run Redis server on")
-var replicaOf = flag.String("replicaof", "", "Master to replicate. Format: \"<HOST> <PORT>\"")
+var (
+	dbFileName = flag.String("dbfilename", "dump.rdb", "Name of the RDB file to load")
+	dir        = flag.String("dir", "/tmp/redis-files", "Directory where RDB file is stored")
+	port       = flag.Int("port", 6379, "Port to run Redis server on")
+	replicaOf  = flag.String("replicaof", "", "Master to replicate. Format: \"<HOST> <PORT>\"")
+)
 
 func main() {
 	flag.Parse()
 	host := "0.0.0.0"
-	config := redis.Config{
+	info := redis.Info{
 		Replication: redis.Replication{
 			Role:                    redis.Master,
 			MasterReplicationID:     random.AlphaNumeric(40),
@@ -24,7 +28,7 @@ func main() {
 		},
 	}
 	if *replicaOf != "" {
-		config.Replication.Role = redis.Replica
+		info.Replication.Role = redis.Replica
 		masterAddr := strings.Split(*replicaOf, " ")
 		if len(masterAddr) != 2 {
 			log.Fatalf("--replicaof should be in the format \"<HOST> <PORT>\"")
@@ -34,13 +38,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to parse master port: %v", err)
 		}
-		config.Replication.MasterHost = host
-		config.Replication.MasterPort = port
+		info.Replication.MasterHost = host
+		info.Replication.MasterPort = port
 	}
 	server := redis.NewServer(redis.ServerParams{
-		Host:   host,
-		Port:   *port,
-		Config: config,
+		Host:       host,
+		Port:       *port,
+		ServerInfo: info,
+		Config: redis.Config{
+			"dir":        *dir,
+			"dbfilename": *dbFileName,
+		},
 	})
 	server.Start()
 }

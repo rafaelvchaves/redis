@@ -29,10 +29,10 @@ func Infof(ctx context.Context, msg string, args ...any) {
 }
 
 func Errorf(ctx context.Context, msg string, args ...any) {
-	slog.ErrorContext(ctx, fmt.Sprintf(prefix(ctx)+" "+msg, args...), "role", ctx.Value("role").(string))
+	slog.ErrorContext(ctx, fmt.Sprintf(prefix(ctx)+" "+msg, args...))
 }
 
 func Fatalf(ctx context.Context, msg string, args ...any) {
-	slog.ErrorContext(ctx, fmt.Sprintf(prefix(ctx)+" "+msg, args...), "role", ctx.Value("role").(string))
+	slog.ErrorContext(ctx, fmt.Sprintf(prefix(ctx)+" "+msg, args...))
 	os.Exit(1)
 }

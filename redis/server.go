@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,12 +19,12 @@ import (
 )
 
 type Server struct {
-	host   string
-	port   int
-	cache  cache.Map[resp.BulkString, CacheEntry]
-	config Config
-	master net.Conn
-	// replicas       cache.Map[net.Addr, replica]
+	host           string
+	port           int
+	cache          cache.Map[resp.BulkString, CacheEntry]
+	serverInfo     Info
+	config         Config
+	master         net.Conn
 	replicas       map[net.Addr]replica
 	bytesProcessed int
 }
@@ -49,19 +48,21 @@ const (
 )
 
 type ServerParams struct {
-	Host   string
-	Port   int
-	Role   Role
-	Config Config
+	Host       string
+	Port       int
+	Role       Role
+	ServerInfo Info
+	Config     Config
 }
 
 func NewServer(params ServerParams) *Server {
 	return &Server{
-		host:     params.Host,
-		port:     params.Port,
-		config:   params.Config,
-		cache:    cache.NewTypedSyncMap[resp.BulkString, CacheEntry](),
-		replicas: make(map[net.Addr]replica),
+		host:       params.Host,
+		port:       params.Port,
+		serverInfo: params.ServerInfo,
+		config:     params.Config,
+		cache:      cache.NewTypedSyncMap[resp.BulkString, CacheEntry](),
+		replicas:   make(map[net.Addr]replica),
 	}
 }
 
@@ -73,7 +74,7 @@ const (
 
 func (s *Server) Start() {
 	ctxlog.AddKeyPrefix(roleCtxKey)
-	role := s.config.Replication.Role
+	role := s.serverInfo.Replication.Role
 	ctx := context.WithValue(context.Background(), roleCtxKey, string(role))
 	if role == Replica {
 		go s.connectToMaster(ctx)
@@ -107,7 +108,9 @@ func (s *Server) handleClientConnection(ctx context.Context, conn net.Conn) {
 		ctxlog.Infof(ctx, "received %v", input)
 		cmd, err := command.Parse(input)
 		if err != nil {
-			ctxlog.Errorf(ctx, "command.Parse: %v", cmd)
+			ctxlog.Errorf(ctx, "command.Parse: %v", err)
+			msg := fmt.Sprintf("invalid command: %v", err)
+			conn.Write(resp.SimpleError{Message: msg}.Encode())
 			continue
 		}
 		details := cmd.Details()
@@ -117,7 +120,7 @@ func (s *Server) handleClientConnection(ctx context.Context, conn net.Conn) {
 				ctxlog.Errorf(ctx, "conn.Write: %v", err)
 			}
 		}
-		if s.config.Replication.Role == Master && details.PropagateToReplica {
+		if s.serverInfo.Replication.Role == Master && details.PropagateToReplica {
 			s.propagate(ctx, input)
 		}
 	}
@@ -166,7 +169,9 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 	case command.PSync:
 		return s.psync(req, conn)
 	case command.Wait:
-		return s.wait(ctx, req, conn)
+		return s.wait(ctx, req)
+	case command.GetConfig:
+		return s.getConfig(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -204,7 +209,7 @@ func (s *Server) get(req command.Get) []resp.Value {
 func (s *Server) info(req command.Info) []resp.Value {
 	switch req.Section {
 	case "replication":
-		return []resp.Value{s.config.ToBulkString("replication")}
+		return []resp.Value{s.serverInfo.ToBulkString("replication")}
 	default:
 		return []resp.Value{resp.SimpleError{Message: "unknown section"}}
 	}
@@ -229,8 +234,8 @@ func (s *Server) replConfig(cmd command.ReplConfig, conn net.Conn) []resp.Value 
 }
 
 func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
-	defaultID := resp.BulkString(s.config.Replication.MasterReplicationID)
-	defaultOffset := resp.BulkString(strconv.Itoa(s.config.Replication.MasterReplicationOffset))
+	defaultID := resp.BulkString(s.serverInfo.Replication.MasterReplicationID)
+	defaultOffset := resp.BulkString(strconv.Itoa(s.serverInfo.Replication.MasterReplicationOffset))
 	id := req.ReplicationID.GetOrDefault(resp.BulkString(defaultID))
 	offset := req.ReplicationOffset.GetOrDefault(resp.BulkString(defaultOffset))
 	resync := fmt.Sprintf("FULLRESYNC %s %s", id, offset)
@@ -245,7 +250,15 @@ func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 	}
 }
 
-func (s *Server) wait(ctx context.Context, req command.Wait, conn net.Conn) []resp.Value {
+func (s *Server) state() (string, error) {
+	state, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+	if err != nil {
+		return "", err
+	}
+	return string(state), nil
+}
+
+func (s *Server) wait(ctx context.Context, req command.Wait) []resp.Value {
 	var wg sync.WaitGroup
 	var count atomic.Int32
 	for _, replica := range s.replicas {
@@ -255,8 +268,8 @@ func (s *Server) wait(ctx context.Context, req command.Wait, conn net.Conn) []re
 		}
 		wg.Add(1)
 		go func() {
-			timer := time.NewTimer(125 * time.Millisecond)
 			defer wg.Done()
+			timer := time.NewTimer(125 * time.Millisecond)
 			input := resp.Array{
 				resp.BulkString("REPLCONF"),
 				resp.BulkString("GETACK"),
@@ -289,22 +302,23 @@ func (s *Server) wait(ctx context.Context, req command.Wait, conn net.Conn) []re
 	return []resp.Value{resp.Integer(count.Load())}
 }
 
-func (s *Server) state() (string, error) {
-	state, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
-	if err != nil {
-		return "", err
+func (s *Server) getConfig(ctx context.Context, req command.GetConfig) []resp.Value {
+	var result resp.Array
+	for _, key := range req.Keys {
+		if value, ok := s.config[string(key)]; ok {
+			result = append(result, key, resp.BulkString(fmt.Sprint(value)))
+		}
 	}
-	return string(state), nil
+	return []resp.Value{result}
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {
-	host := s.config.Replication.MasterHost
-	port := strconv.Itoa(s.config.Replication.MasterPort)
+	host := s.serverInfo.Replication.MasterHost
+	port := strconv.Itoa(s.serverInfo.Replication.MasterPort)
 	addr := net.JoinHostPort(host, port)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		ctxlog.Fatalf(ctx, "Error connecting to master: %v", err)
-		os.Exit(1)
 	}
 	defer conn.Close()
 	decoder := resp.NewDecoder(conn)
@@ -371,7 +385,7 @@ func (s *Server) awaitSync(ctx context.Context, decoder resp.Decoder) {
 }
 
 func (s *Server) propagate(ctx context.Context, cmd resp.Array) {
-	fmt.Printf("propagating %v to replicas\n", cmd)
+	ctxlog.Infof(ctx, "propagating %v to replicas\n", cmd)
 	for _, replica := range s.replicas {
 		bytes := cmd.Encode()
 		if _, err := replica.conn.Write(bytes); err != nil {

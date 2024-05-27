@@ -7,19 +7,19 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
-type Config struct {
+type Info struct {
 	Replication Replication
 }
 
-// ToBulkString encodes the configuration as a RESP bulk string.
+// ToBulkString encodes the server information as a RESP bulk string.
 // The first argument is the section (if any) of the config to return.
 // A value of "all" denotes that the entire config should be encoded.
-func (c Config) ToBulkString(sections ...string) resp.BulkString {
+func (i Info) ToBulkString(sections ...string) resp.BulkString {
 	structsToEncode := map[string]any{}
 	for _, section := range sections {
 		switch section {
 		case "replication":
-			structsToEncode[section] = c.Replication
+			structsToEncode[section] = i.Replication
 		default:
 			structsToEncode[section] = struct{}{}
 		}
@@ -47,3 +47,5 @@ type Replication struct {
 	MasterHost              string `json:"master_host"`
 	MasterPort              int    `json:"master_port"`
 }
+
+type Config map[string]any
