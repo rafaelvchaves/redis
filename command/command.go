@@ -3,7 +3,7 @@ package command
 import (
 	"time"
 
-	"github.com/codecrafters-io/redis-starter-go/optional"
+	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 

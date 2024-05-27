@@ -31,3 +31,12 @@ func (m *TypedSyncMap[K, V]) Range(f func(K, V) bool) {
 	}
 	m.m.Range(g)
 }
+
+func (m *TypedSyncMap[K, V]) Len() int {
+	var result int
+	m.m.Range(func(_ any, _ any) bool {
+		result++
+		return true
+	})
+	return result
+}

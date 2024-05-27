@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/codecrafters-io/redis-starter-go/random"
+	"github.com/codecrafters-io/redis-starter-go/lib/random"
 	"github.com/codecrafters-io/redis-starter-go/redis"
 )
 

@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -9,9 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/codecrafters-io/redis-starter-go/cache"
 	"github.com/codecrafters-io/redis-starter-go/command"
-	"github.com/codecrafters-io/redis-starter-go/optional"
+	"github.com/codecrafters-io/redis-starter-go/lib/cache"
+	"github.com/codecrafters-io/redis-starter-go/lib/ctxlog"
+	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
 
@@ -54,16 +56,23 @@ func NewServer(params ServerParams) *Server {
 	}
 }
 
+type roleCtxKeyType string
+
+const (
+	roleCtxKey roleCtxKeyType = "role"
+)
+
 func (s *Server) Start() {
-	if s.config.Replication.Role == Replica {
-		s.master = s.connectToMaster()
-		go s.handleMasterConnection(s.master)
+	ctxlog.AddKeyPrefix(roleCtxKey)
+	role := s.config.Replication.Role
+	ctx := context.WithValue(context.Background(), roleCtxKey, string(role))
+	if role == Replica {
+		go s.connectToMaster(ctx)
 	}
 	address := net.JoinHostPort(s.host, strconv.Itoa(s.port))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		fmt.Println("Failed to bind to port", s.port)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "Failed to bind to port %d", s.port)
 	}
 	go func() {
 		if s.config.Replication.Role == Replica {
@@ -78,67 +87,63 @@ func (s *Server) Start() {
 					resp.BulkString("*"),
 				}
 				if _, err := conn.Write(input.Encode()); err != nil {
-					fmt.Println(err)
+					ctxlog.Errorf(ctx, "conn.Write: %v", err)
 				}
 				return true
 			})
 		}
 	}()
-	fmt.Printf("Listening at address %s...\n", address)
+	ctxlog.Infof(ctx, "Listening at address %s...", address)
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
+			ctxlog.Errorf(ctx, "listener.Accept: %v", err)
 			continue
 		}
-		fmt.Printf("Accepted connection with %s\n", conn.RemoteAddr())
-		go s.handleClientConnection(conn)
+		ctxlog.Infof(ctx, "Accepted connection with %s", conn.RemoteAddr())
+		go s.handleClientConnection(ctx, conn)
 	}
 }
 
-func (s *Server) handleClientConnection(conn net.Conn) {
+func (s *Server) handleClientConnection(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	decoder := resp.NewDecoder(conn)
 	for {
 		input, err := decoder.DecodeArray()
 		if err != nil {
-			conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
 			continue
 		}
-		fmt.Printf("[%s]: received %v\n", s.config.Replication.Role, input)
+		ctxlog.Infof(ctx, "received %v", input)
 		cmd, err := command.Parse(input)
 		if err != nil {
-			fmt.Printf("unknown command %v\n", cmd)
+			ctxlog.Errorf(ctx, "command.Parse: %v", cmd)
 			continue
 		}
 		details := cmd.Details()
 		messages := s.execute(cmd, conn)
 		for _, message := range messages {
 			if _, err := conn.Write(message.Encode()); err != nil {
-				fmt.Println(err)
+				ctxlog.Errorf(ctx, "conn.Write: %v", err)
 			}
 		}
 		if s.config.Replication.Role == Master && details.PropagateToReplica {
-			s.propagate(input)
+			s.propagate(ctx, input)
 		}
 	}
 }
 
-func (s *Server) handleMasterConnection(conn net.Conn) {
-	defer conn.Close()
-	decoder := resp.NewDecoder(conn)
+func (s *Server) handleMasterConnection(ctx context.Context, conn net.Conn, decoder resp.Decoder) {
 	for {
 		input, err := decoder.DecodeArray()
 		if err != nil {
-			fmt.Println(err)
-			// conn.Write(resp.SimpleError{Message: err.Error()}.Encode())
+			ctxlog.Errorf(ctx, "decoder.DecodeArray: %v", err)
 			continue
 		}
-		fmt.Printf("[%s]: received %v from master\n", s.config.Replication.Role, input)
+		ctxlog.Infof(ctx, "received %v", input)
 		cmd, err := command.Parse(input)
 		if err != nil {
-			fmt.Printf("unknown command %v\n", cmd)
+			ctxlog.Errorf(ctx, "command.Parse: %v", err)
 			continue
 		}
 		details := cmd.Details()
@@ -146,7 +151,7 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 		if details.RequiresReplicaResponse {
 			for _, message := range messages {
 				if _, err := conn.Write(message.Encode()); err != nil {
-					fmt.Println(err)
+					ctxlog.Errorf(ctx, "conn.Write: %v", err)
 				}
 			}
 		}
@@ -249,7 +254,7 @@ func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 }
 
 func (s *Server) wait(_ command.Wait) []resp.Value {
-	return []resp.Value{resp.Integer(0)}
+	return []resp.Value{resp.Integer(s.replicas.Len())}
 }
 
 func (s *Server) state() (string, error) {
@@ -260,89 +265,84 @@ func (s *Server) state() (string, error) {
 	return string(state), nil
 }
 
-func (s *Server) connectToMaster() net.Conn {
+func (s *Server) connectToMaster(ctx context.Context) {
 	host := s.config.Replication.MasterHost
 	port := strconv.Itoa(s.config.Replication.MasterPort)
 	addr := net.JoinHostPort(host, port)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		fmt.Println("Error connecting to master: ", err.Error())
-		return nil
+		ctxlog.Fatalf(ctx, "Error connecting to master: %v", err)
+		os.Exit(1)
 	}
+	defer conn.Close()
 	decoder := resp.NewDecoder(conn)
-	s.sendToMaster(conn, resp.BulkString("PING"))
-	s.awaitResponse(decoder, "PONG")
-	s.sendToMaster(conn,
+	s.sendToMaster(ctx, conn, resp.BulkString("PING"))
+	s.awaitResponse(ctx, decoder, "PONG")
+	s.sendToMaster(ctx, conn,
 		resp.BulkString("REPLCONF"),
 		resp.BulkString("listening-port"),
 		resp.BulkString(strconv.Itoa(s.port)),
 	)
-	s.awaitResponse(decoder, "OK")
-	s.sendToMaster(conn,
+	s.awaitResponse(ctx, decoder, "OK")
+	s.sendToMaster(ctx, conn,
 		resp.BulkString("REPLCONF"),
 		resp.BulkString("capa"),
 		resp.BulkString("psync2"),
 	)
-	s.awaitResponse(decoder, "OK")
-	s.sendToMaster(conn,
+	s.awaitResponse(ctx, decoder, "OK")
+	s.sendToMaster(ctx, conn,
 		resp.BulkString("PSYNC"),
 		resp.BulkString("?"),
 		resp.BulkString("-1"),
 	)
-	s.awaitSync(decoder)
-	return conn
+	s.awaitSync(ctx, decoder)
+	s.master = conn
+	s.handleMasterConnection(ctx, conn, decoder)
 }
 
-func (s *Server) sendToMaster(conn net.Conn, values ...resp.Value) {
+func (s *Server) sendToMaster(ctx context.Context, conn net.Conn, values ...resp.Value) {
 	array := resp.Array(values)
-	fmt.Println("array:", array)
 	_, err := conn.Write(array.Encode())
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "conn.Write: %v", err)
 	}
 }
 
-func (s *Server) awaitResponse(decoder resp.Decoder, response string) {
+func (s *Server) awaitResponse(ctx context.Context, decoder resp.Decoder, response string) {
 	got, err := decoder.Decode()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "decoder.Decode: %v", err)
 	}
 	if str := got.(resp.String); str != resp.String(response) {
-		fmt.Printf("expected %v, got %v\n", response, str)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "awaitResponse: expected %v, got %v", response, str)
 	}
 }
 
-func (s *Server) awaitSync(decoder resp.Decoder) {
+func (s *Server) awaitSync(ctx context.Context, decoder resp.Decoder) {
 	// The master is expected to first respond with a FULLRESYNC message.
 	// Currently, the replica does not do anything with this.
 	resync, err := decoder.Decode()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "decoder.Decode: %v", err)
 	}
 	if str := resync.(resp.String); !strings.HasPrefix(string(str), "FULLRESYNC") {
-		fmt.Printf("expected string with FULLRESYNC prefix, got %v\n", str)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "awaitSync: expected string with FULLRESYNC prefix, got %v", str)
 	}
 
 	// Next, the master sends its contents as a RDB file. The replica
 	// would usually replace its state with the contents of the file.
 	file, err := decoder.DecodeRDBFile()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		ctxlog.Fatalf(ctx, "decoder.DecodeRDBFile: %v", err)
 	}
-	fmt.Println("received RDB file:", []byte(file))
+	ctxlog.Infof(ctx, "received RDB file: %v", []byte(file))
 }
 
-func (s *Server) propagate(cmd resp.Array) {
+func (s *Server) propagate(ctx context.Context, cmd resp.Array) {
 	fmt.Printf("propagating %v to replicas\n", cmd)
 	s.replicas.Range(func(addr net.Addr, conn net.Conn) bool {
 		if _, err := conn.Write(cmd.Encode()); err != nil {
-			fmt.Println(err)
+			ctxlog.Errorf(ctx, "conn.Write: %v", err)
 		}
 		return true
 	})
