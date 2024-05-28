@@ -80,6 +80,9 @@ const (
 )
 
 var (
+	errInvalidStreamID = resp.SimpleError{
+		Message: "Invalid stream ID specified as stream command argument",
+	}
 	errWrongType = resp.SimpleError{
 		Kind:    "WRONGTYPE",
 		Message: "Operation against a key holding the wrong kind of value",
@@ -381,22 +384,53 @@ func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
 	if !ok {
 		return []resp.Value{errWrongType}
 	}
-	id := req.EntryIDPattern
-	if id == resp.BulkString("0-0") {
+	t, n, err := splitStreamID(string(req.EntryIDPattern), stream.LatestTime, stream.LatestSequence)
+	if err != nil {
+		return []resp.Value{errInvalidStreamID}
+	}
+	if t == 0 && n == 0 {
 		return []resp.Value{errXAddEntryBelowMin}
 	}
-	if id <= stream.Latest {
+	if t < stream.LatestTime || (t == stream.LatestTime && n <= stream.LatestSequence) {
 		return []resp.Value{errXAddStaleEntry}
 	}
-	stream.Latest = id
+	stream.LatestTime = t
+	stream.LatestSequence = n
+	id := resp.BulkString(fmt.Sprintf("%d-%d", t, n))
 	if _, ok := stream.Entries[id]; !ok {
 		stream.Entries[id] = make(map[resp.BulkString]resp.BulkString)
 	}
-	for key, value := range req.Pairs {
-		stream.Entries[id][key] = value
-	}
+	stream.Entries[id] = req.Pairs
 	s.cache.Put(req.StreamKey, CacheEntry{value: stream, ttl: entry.ttl})
 	return []resp.Value{resp.String(id)}
+}
+
+func splitStreamID(id string, maxTime int64, maxSeq int64) (int64, int64, error) {
+	if id == "*" {
+		return time.Now().UnixMilli(), 0, nil
+	}
+	fields := strings.Split(string(id), "-")
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("expected 2 fields, got %d", len(fields))
+	}
+	t, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	if fields[1] == "*" {
+		if t == 0 {
+			return 0, 1, nil
+		}
+		if t == maxTime {
+			return t, maxSeq + 1, nil
+		}
+		return t, 0, nil
+	}
+	n, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	return t, n, nil
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {

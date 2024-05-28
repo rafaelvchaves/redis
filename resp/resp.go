@@ -85,8 +85,9 @@ func (i Integer) Encode() []byte {
 }
 
 type Stream struct {
-	Entries map[BulkString]map[BulkString]BulkString
-	Latest  BulkString
+	Entries        map[BulkString]map[BulkString]BulkString
+	LatestTime     int64
+	LatestSequence int64
 }
 
 func (s Stream) Encode() []byte {
