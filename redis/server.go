@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -212,6 +213,8 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 		return s.typeOf(ctx, req)
 	case command.XAdd:
 		return s.xAdd(ctx, req)
+	case command.XRange:
+		return s.xRange(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -376,61 +379,137 @@ func (s *Server) typeOf(_ context.Context, req command.Type) []resp.Value {
 func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
 	entry, ok := s.cache.Get(req.StreamKey)
 	if !ok {
-		entry = CacheEntry{value: resp.Stream{
-			Entries: make(map[resp.BulkString]map[resp.BulkString]resp.BulkString),
-		}}
+		entry = CacheEntry{value: resp.Stream{}}
 	}
 	stream, ok := entry.value.(resp.Stream)
 	if !ok {
 		return []resp.Value{errWrongType}
 	}
-	t, n, err := splitStreamID(string(req.EntryIDPattern), stream.LatestTime, stream.LatestSequence)
+	var lastID resp.EntryID
+	if n := len(stream.Entries); n > 0 {
+		lastID = stream.Entries[n-1].ID
+	}
+	newID, err := parseEntryID(string(req.EntryIDPattern), lastID.Time, lastID.SequenceNumber)
 	if err != nil {
 		return []resp.Value{errInvalidStreamID}
 	}
-	if t == 0 && n == 0 {
+	if newID.Time == 0 && newID.SequenceNumber == 0 {
 		return []resp.Value{errXAddEntryBelowMin}
 	}
-	if t < stream.LatestTime || (t == stream.LatestTime && n <= stream.LatestSequence) {
+	if !lastID.Less(newID) {
 		return []resp.Value{errXAddStaleEntry}
 	}
-	stream.LatestTime = t
-	stream.LatestSequence = n
-	id := resp.BulkString(fmt.Sprintf("%d-%d", t, n))
-	if _, ok := stream.Entries[id]; !ok {
-		stream.Entries[id] = make(map[resp.BulkString]resp.BulkString)
-	}
-	stream.Entries[id] = req.Pairs
+	stream.Entries = append(stream.Entries, resp.Entry{ID: newID, Values: req.Pairs})
 	s.cache.Put(req.StreamKey, CacheEntry{value: stream, ttl: entry.ttl})
-	return []resp.Value{resp.String(id)}
+	return []resp.Value{resp.String(newID.String())}
 }
 
-func splitStreamID(id string, maxTime int64, maxSeq int64) (int64, int64, error) {
+func parseEntryID(id string, maxTime int64, maxSeq int64) (result resp.EntryID, err error) {
 	if id == "*" {
-		return time.Now().UnixMilli(), 0, nil
+		result.Time = time.Now().UnixMilli()
+		result.SequenceNumber = 0
+		return
 	}
 	fields := strings.Split(string(id), "-")
 	if len(fields) != 2 {
-		return 0, 0, fmt.Errorf("expected 2 fields, got %d", len(fields))
+		err = fmt.Errorf("expected 2 fields, got %d", len(fields))
+		return
 	}
 	t, err := strconv.ParseInt(fields[0], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return
 	}
+	result.Time = t
 	if fields[1] == "*" {
-		if t == 0 {
-			return 0, 1, nil
-		}
 		if t == maxTime {
-			return t, maxSeq + 1, nil
+			result.SequenceNumber = maxSeq + 1
+			return
 		}
-		return t, 0, nil
+		result.SequenceNumber = 0
+		return
 	}
 	n, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return
 	}
-	return t, n, nil
+	result.SequenceNumber = n
+	return
+}
+
+func (s *Server) xRange(_ context.Context, req command.XRange) []resp.Value {
+	entry, ok := s.cache.Get(req.StreamKey)
+	if !ok {
+		entry = CacheEntry{value: resp.Stream{}}
+	}
+	stream, ok := entry.value.(resp.Stream)
+	if !ok {
+		return []resp.Value{errWrongType}
+	}
+	start, err := parseEndpont(string(req.Start), 0)
+	if err != nil {
+		return []resp.Value{errInvalidStreamID}
+	}
+	end, err := parseEndpont(string(req.End), math.MaxInt64)
+	if err != nil {
+		return []resp.Value{errInvalidStreamID}
+	}
+	return []resp.Value{s.collect(stream.Entries, start, end)}
+}
+
+func parseEndpont(endpoint string, defaultSeqNumber int64) (resp.EntryID, error) {
+	fields := strings.Split(string(endpoint), "-")
+	if len(fields) > 2 {
+		return resp.EntryID{}, fmt.Errorf("expected at most 2 fields, got %d", len(fields))
+	}
+	t, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return resp.EntryID{}, err
+	}
+	if len(fields) == 1 {
+		return resp.EntryID{Time: t, SequenceNumber: defaultSeqNumber}, nil
+	}
+	n, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return resp.EntryID{}, err
+	}
+	return resp.EntryID{Time: t, SequenceNumber: n}, nil
+}
+
+func (s *Server) collect(entries []resp.Entry, start, end resp.EntryID) resp.Array {
+	var result resp.Array
+	n := len(entries)
+
+	// Search for start point.
+	i := s.search(entries, start)
+	for i < n && (entries[i].ID.Less(end) || entries[i].ID == end) {
+		result = append(result, resp.Array{
+			resp.BulkString(entries[i].ID.String()),
+			entries[i].Values,
+		})
+		i++
+	}
+	return result
+}
+
+// search returns the next index in entries with an ID greater than or equal
+// to targetID.
+func (s *Server) search(entries []resp.Entry, targetID resp.EntryID) int {
+	n := len(entries)
+	i := 0
+	j := n - 1
+	for i <= j {
+		m := (i + j) / 2
+		fmt.Println(i, j, m)
+		switch {
+		case entries[m].ID == targetID:
+			return m
+		case entries[m].ID.Less(targetID):
+			i = m + 1
+		default:
+			j = m - 1
+		}
+	}
+	return j + 1
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {

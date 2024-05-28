@@ -133,10 +133,25 @@ func TestParseCommand(t *testing.T) {
 			want: command.XAdd{
 				StreamKey:      resp.BulkString("stream_key"),
 				EntryIDPattern: resp.BulkString("1526919030474-0"),
-				Pairs: map[resp.BulkString]resp.BulkString{
-					"temperature": resp.BulkString("36"),
-					"humidity":    resp.BulkString("95"),
+				Pairs: resp.Array{
+					resp.BulkString("temperature"),
+					resp.BulkString("36"),
+					resp.BulkString("humidity"),
+					resp.BulkString("95"),
 				},
+			},
+		},
+		"XRANGE some_key 12345 67890": {
+			input: resp.Array{
+				resp.BulkString("XRANGE"),
+				resp.BulkString("some_key"),
+				resp.BulkString("12345"),
+				resp.BulkString("67890"),
+			},
+			want: command.XRange{
+				StreamKey: resp.BulkString("some_key"),
+				Start:     resp.BulkString("12345"),
+				End:       resp.BulkString("67890"),
 			},
 		},
 	}

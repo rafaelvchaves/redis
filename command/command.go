@@ -112,9 +112,19 @@ type Type struct {
 type XAdd struct {
 	StreamKey      resp.BulkString
 	EntryIDPattern resp.BulkString
-	Pairs          map[resp.BulkString]resp.BulkString
+	Pairs          resp.Array
 }
 
 func (XAdd) Details() Details {
+	return Details{}
+}
+
+type XRange struct {
+	StreamKey resp.BulkString
+	Start     resp.BulkString
+	End       resp.BulkString
+}
+
+func (XRange) Details() Details {
 	return Details{}
 }

@@ -1,6 +1,7 @@
 package resp
 
 import (
+	"fmt"
 	"strconv"
 )
 
@@ -85,9 +86,25 @@ func (i Integer) Encode() []byte {
 }
 
 type Stream struct {
-	Entries        map[BulkString]map[BulkString]BulkString
-	LatestTime     int64
-	LatestSequence int64
+	Entries []Entry
+}
+
+type Entry struct {
+	ID     EntryID
+	Values Array
+}
+
+type EntryID struct {
+	Time           int64
+	SequenceNumber int64
+}
+
+func (i EntryID) Less(other EntryID) bool {
+	return i.Time < other.Time || (i.Time == other.Time && i.SequenceNumber < other.SequenceNumber)
+}
+
+func (i EntryID) String() string {
+	return fmt.Sprintf("%d-%d", i.Time, i.SequenceNumber)
 }
 
 func (s Stream) Encode() []byte {
