@@ -141,6 +141,11 @@ func Parse(array resp.Array) (Command, error) {
 			return nil, err
 		}
 		return Keys{Pattern: pattern}, nil
+	case "TYPE":
+		if len(input) < 2 {
+			return nil, fmt.Errorf("expected 1 argument")
+		}
+		return Type{Key: input[1]}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

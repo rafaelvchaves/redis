@@ -113,6 +113,13 @@ func TestParseCommand(t *testing.T) {
 			},
 			want: command.Keys{Pattern: glob.MustCompile("*")},
 		},
+		"TYPE foo": {
+			input: resp.Array{
+				resp.BulkString("TYPE"),
+				resp.BulkString("foo"),
+			},
+			want: command.Type{Key: resp.BulkString("foo")},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -137,6 +144,7 @@ var cmpOpts = []cmp.Option{
 		command.Info{},
 		command.PSync{},
 		command.Wait{},
+		command.Type{},
 	),
 	compareOptions[time.Time](cmp.Comparer((time.Time).Equal)),
 }

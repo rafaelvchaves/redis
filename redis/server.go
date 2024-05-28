@@ -192,6 +192,8 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 		return s.configGet(ctx, req)
 	case command.Keys:
 		return s.keys(ctx, req)
+	case command.Type:
+		return s.typeOf(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -333,6 +335,19 @@ func (s *Server) keys(_ context.Context, req command.Keys) []resp.Value {
 		return true
 	})
 	return []resp.Value{result}
+}
+
+func (s *Server) typeOf(_ context.Context, req command.Type) []resp.Value {
+	entry, ok := s.cache.Get(req.Key)
+	if !ok {
+		return []resp.Value{resp.String("none")}
+	}
+	switch entry.value.(type) {
+	case resp.BulkString:
+		return []resp.Value{resp.String("string")}
+	default:
+		return []resp.Value{resp.String("none")}
+	}
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {

@@ -103,3 +103,8 @@ type Keys struct {
 func (Keys) Details() Details {
 	return Details{}
 }
+
+type Type struct {
+	defaultDetailsImpl
+	Key resp.BulkString
+}
