@@ -9,6 +9,7 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
+	"github.com/gobwas/glob"
 )
 
 func Parse(array resp.Array) (Command, error) {
@@ -113,7 +114,7 @@ func Parse(array resp.Array) (Command, error) {
 			if n == 0 {
 				return nil, fmt.Errorf("no keys specified")
 			}
-			return GetConfig{Keys: input[2:]}, nil
+			return ConfigGet{Keys: input[2:]}, nil
 		case "SET":
 			args := input[2:]
 			n := len(args)
@@ -128,9 +129,18 @@ func Parse(array resp.Array) (Command, error) {
 				key, value := args[i], args[i+1]
 				pairs[key] = value
 			}
-			return SetConfig{Pairs: pairs}, nil
+			return ConfigSet{Pairs: pairs}, nil
 		}
 		return nil, fmt.Errorf("unknown command GET %s", input[1])
+	case "KEYS":
+		if len(input) < 2 {
+			return nil, fmt.Errorf("expected 1 argument")
+		}
+		pattern, err := glob.Compile(string(input[1]))
+		if err != nil {
+			return nil, err
+		}
+		return Keys{Pattern: pattern}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

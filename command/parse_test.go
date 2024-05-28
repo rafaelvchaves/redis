@@ -7,6 +7,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/command"
 	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
+	"github.com/gobwas/glob"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -91,7 +92,7 @@ func TestParseCommand(t *testing.T) {
 				resp.BulkString("key2"),
 				resp.BulkString("value2"),
 			},
-			want: command.SetConfig{Pairs: map[resp.BulkString]resp.BulkString{
+			want: command.ConfigSet{Pairs: map[resp.BulkString]resp.BulkString{
 				"key1": "value1",
 				"key2": "value2",
 			}},
@@ -103,7 +104,14 @@ func TestParseCommand(t *testing.T) {
 				resp.BulkString("key1"),
 				resp.BulkString("key2"),
 			},
-			want: command.GetConfig{Keys: []resp.BulkString{"key1", "key2"}},
+			want: command.ConfigGet{Keys: []resp.BulkString{"key1", "key2"}},
+		},
+		"KEYS *": {
+			input: resp.Array{
+				resp.BulkString("KEYS"),
+				resp.BulkString("*"),
+			},
+			want: command.Keys{Pattern: glob.MustCompile("*")},
 		},
 	}
 	for name, test := range tests {

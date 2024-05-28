@@ -5,6 +5,7 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
+	"github.com/gobwas/glob"
 )
 
 type Command interface {
@@ -79,18 +80,26 @@ type Wait struct {
 	Timeout      time.Duration
 }
 
-type GetConfig struct {
+type ConfigGet struct {
 	Keys []resp.BulkString
 }
 
-func (GetConfig) Details() Details {
+func (ConfigGet) Details() Details {
 	return Details{}
 }
 
-type SetConfig struct {
+type ConfigSet struct {
 	Pairs map[resp.BulkString]resp.BulkString
 }
 
-func (SetConfig) Details() Details {
+func (ConfigSet) Details() Details {
+	return Details{}
+}
+
+type Keys struct {
+	Pattern glob.Glob
+}
+
+func (Keys) Details() Details {
 	return Details{}
 }

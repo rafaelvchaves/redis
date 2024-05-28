@@ -11,3 +11,8 @@ module github.com/codecrafters-io/redis-starter-go
 go 1.22
 
 require github.com/google/go-cmp v0.6.0
+
+require (
+	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/zhuyie/golzf v0.0.0-20161112031142-8387b0307ade // indirect
+)

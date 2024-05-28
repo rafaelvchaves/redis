@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
@@ -38,6 +37,14 @@ type replica struct {
 type CacheEntry struct {
 	value resp.Value
 	ttl   optional.Value[time.Time]
+}
+
+func (c CacheEntry) String() string {
+	ttl := "None"
+	if t, ok := c.ttl.Get(); ok {
+		ttl = t.Format(time.RFC3339)
+	}
+	return fmt.Sprintf("{value: %+v, ttl: %s}", c.value, ttl)
 }
 
 type Role string
@@ -76,6 +83,17 @@ func (s *Server) Start() {
 	ctxlog.AddKeyPrefix(roleCtxKey)
 	role := s.serverInfo.Replication.Role
 	ctx := context.WithValue(context.Background(), roleCtxKey, string(role))
+	if role == Master {
+		rdb, err := loadRDBFile(s.config["dir"].(string), s.config["dbfilename"].(string))
+		if err != nil {
+			ctxlog.Fatalf(ctx, "loadRDBFile: %v", err)
+		}
+		state, err := load(rdb)
+		if err != nil {
+			ctxlog.Fatalf(ctx, "Failed to load RDB contents: %v", err)
+		}
+		s.cache = state.cache
+	}
 	if role == Replica {
 		go s.connectToMaster(ctx)
 	}
@@ -170,8 +188,10 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 		return s.psync(req, conn)
 	case command.Wait:
 		return s.wait(ctx, req)
-	case command.GetConfig:
-		return s.getConfig(ctx, req)
+	case command.ConfigGet:
+		return s.configGet(ctx, req)
+	case command.Keys:
+		return s.keys(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -239,23 +259,15 @@ func (s *Server) psync(req command.PSync, conn net.Conn) []resp.Value {
 	id := req.ReplicationID.GetOrDefault(resp.BulkString(defaultID))
 	offset := req.ReplicationOffset.GetOrDefault(resp.BulkString(defaultOffset))
 	resync := fmt.Sprintf("FULLRESYNC %s %s", id, offset)
-	state, err := s.state()
+	rdb, err := dump(state{cache: s.cache})
 	if err != nil {
 		return []resp.Value{resp.SimpleError{Message: "failed to encode current state"}}
 	}
 	s.replicas[conn.RemoteAddr()] = replica{conn: conn, bytesSent: &atomic.Int32{}, acks: make(chan int, 3)}
 	return []resp.Value{
 		resp.String(resync),
-		resp.RDBFile(state),
+		resp.RDBFile(rdb),
 	}
-}
-
-func (s *Server) state() (string, error) {
-	state, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
-	if err != nil {
-		return "", err
-	}
-	return string(state), nil
 }
 
 func (s *Server) wait(ctx context.Context, req command.Wait) []resp.Value {
@@ -302,13 +314,24 @@ func (s *Server) wait(ctx context.Context, req command.Wait) []resp.Value {
 	return []resp.Value{resp.Integer(count.Load())}
 }
 
-func (s *Server) getConfig(ctx context.Context, req command.GetConfig) []resp.Value {
+func (s *Server) configGet(_ context.Context, req command.ConfigGet) []resp.Value {
 	var result resp.Array
 	for _, key := range req.Keys {
 		if value, ok := s.config[string(key)]; ok {
 			result = append(result, key, resp.BulkString(fmt.Sprint(value)))
 		}
 	}
+	return []resp.Value{result}
+}
+
+func (s *Server) keys(_ context.Context, req command.Keys) []resp.Value {
+	var result resp.Array
+	s.cache.Range(func(key resp.BulkString, _ CacheEntry) bool {
+		if req.Pattern.Match(string(key)) {
+			result = append(result, key)
+		}
+		return true
+	})
 	return []resp.Value{result}
 }
 
@@ -376,12 +399,16 @@ func (s *Server) awaitSync(ctx context.Context, decoder resp.Decoder) {
 	}
 
 	// Next, the master sends its contents as a RDB file. The replica
-	// would usually replace its state with the contents of the file.
-	file, err := decoder.DecodeRDBFile()
+	// replaces its state with the contents of the file.
+	rdb, err := decoder.DecodeRDBFile()
 	if err != nil {
 		ctxlog.Fatalf(ctx, "decoder.DecodeRDBFile: %v", err)
 	}
-	ctxlog.Infof(ctx, "received RDB file: %v", []byte(file))
+	state, err := load([]byte(rdb))
+	if err != nil {
+		ctxlog.Fatalf(ctx, "failed to load RDB: %v", err)
+	}
+	s.cache = state.cache
 }
 
 func (s *Server) propagate(ctx context.Context, cmd resp.Array) {
