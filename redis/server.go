@@ -79,6 +79,13 @@ const (
 	roleCtxKey roleCtxKeyType = "role"
 )
 
+var (
+	errWrongType = resp.SimpleError{
+		Kind:    "WRONGTYPE",
+		Message: "Operation against a key holding the wrong kind of value",
+	}
+)
+
 func (s *Server) Start() {
 	ctxlog.AddKeyPrefix(roleCtxKey)
 	role := s.serverInfo.Replication.Role
@@ -194,6 +201,8 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 		return s.keys(ctx, req)
 	case command.Type:
 		return s.typeOf(ctx, req)
+	case command.XAdd:
+		return s.xAdd(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -221,6 +230,9 @@ func (s *Server) get(req command.Get) []resp.Value {
 	entry, ok := s.cache.Get(req.Key)
 	if !ok {
 		return []resp.Value{resp.NullBulkString{}}
+	}
+	if _, ok := entry.value.(resp.Stream); ok {
+		return []resp.Value{errWrongType}
 	}
 	if ttl, ok := entry.ttl.Get(); ok && time.Now().After(ttl) {
 		return []resp.Value{resp.NullBulkString{}}
@@ -345,9 +357,33 @@ func (s *Server) typeOf(_ context.Context, req command.Type) []resp.Value {
 	switch entry.value.(type) {
 	case resp.BulkString:
 		return []resp.Value{resp.String("string")}
+	case resp.Stream:
+		return []resp.Value{resp.String("stream")}
 	default:
 		return []resp.Value{resp.String("none")}
 	}
+}
+
+func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
+	entry, ok := s.cache.Get(req.StreamKey)
+	if !ok {
+		entry = CacheEntry{value: resp.Stream{
+			Entries: make(map[resp.BulkString]map[resp.BulkString]resp.BulkString),
+		}}
+	}
+	stream, ok := entry.value.(resp.Stream)
+	if !ok {
+		return []resp.Value{errWrongType}
+	}
+	id := req.EntryIDPattern
+	if _, ok := stream.Entries[id]; !ok {
+		stream.Entries[id] = make(map[resp.BulkString]resp.BulkString)
+	}
+	for key, value := range req.Pairs {
+		stream.Entries[id][key] = value
+	}
+	s.cache.Put(req.StreamKey, CacheEntry{value: stream, ttl: entry.ttl})
+	return []resp.Value{resp.String(id)}
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {

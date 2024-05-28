@@ -83,3 +83,11 @@ func (i Integer) Encode() []byte {
 	result = append(result, '\r', '\n')
 	return result
 }
+
+type Stream struct {
+	Entries map[BulkString]map[BulkString]BulkString
+}
+
+func (s Stream) Encode() []byte {
+	return nil
+}

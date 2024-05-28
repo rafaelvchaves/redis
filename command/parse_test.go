@@ -120,6 +120,25 @@ func TestParseCommand(t *testing.T) {
 			},
 			want: command.Type{Key: resp.BulkString("foo")},
 		},
+		"XADD stream_key 1526919030474-0 temperature 36 humidity 95": {
+			input: resp.Array{
+				resp.BulkString("XADD"),
+				resp.BulkString("stream_key"),
+				resp.BulkString("1526919030474-0"),
+				resp.BulkString("temperature"),
+				resp.BulkString("36"),
+				resp.BulkString("humidity"),
+				resp.BulkString("95"),
+			},
+			want: command.XAdd{
+				StreamKey:      resp.BulkString("stream_key"),
+				EntryIDPattern: resp.BulkString("1526919030474-0"),
+				Pairs: map[resp.BulkString]resp.BulkString{
+					"temperature": resp.BulkString("36"),
+					"humidity":    resp.BulkString("95"),
+				},
+			},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

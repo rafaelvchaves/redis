@@ -146,6 +146,24 @@ func Parse(array resp.Array) (Command, error) {
 			return nil, fmt.Errorf("expected 1 argument")
 		}
 		return Type{Key: input[1]}, nil
+	case "XADD":
+		if len(input) < 3 {
+			return nil, fmt.Errorf("expected at least 2 arguments")
+		}
+		args := input[3:]
+		n := len(args)
+		if n == 0 {
+			return nil, fmt.Errorf("no key-value pairs specified")
+		}
+		if n%2 != 0 {
+			return nil, fmt.Errorf("unmatched parameter %s", args[n-1])
+		}
+		pairs := make(map[resp.BulkString]resp.BulkString)
+		for i := 0; i < n-1; i += 2 {
+			key, value := args[i], args[i+1]
+			pairs[key] = value
+		}
+		return XAdd{StreamKey: input[1], EntryIDPattern: input[2], Pairs: pairs}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

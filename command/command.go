@@ -108,3 +108,13 @@ type Type struct {
 	defaultDetailsImpl
 	Key resp.BulkString
 }
+
+type XAdd struct {
+	StreamKey      resp.BulkString
+	EntryIDPattern resp.BulkString
+	Pairs          map[resp.BulkString]resp.BulkString
+}
+
+func (XAdd) Details() Details {
+	return Details{}
+}
