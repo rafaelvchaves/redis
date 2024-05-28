@@ -84,6 +84,12 @@ var (
 		Kind:    "WRONGTYPE",
 		Message: "Operation against a key holding the wrong kind of value",
 	}
+	errXAddStaleEntry = resp.SimpleError{
+		Message: "The ID specified in XADD is equal or smaller than the target stream top item",
+	}
+	errXAddEntryBelowMin = resp.SimpleError{
+		Message: "The ID specified in XADD must be greater than 0-0",
+	}
 )
 
 func (s *Server) Start() {
@@ -376,6 +382,13 @@ func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
 		return []resp.Value{errWrongType}
 	}
 	id := req.EntryIDPattern
+	if id == resp.BulkString("0-0") {
+		return []resp.Value{errXAddEntryBelowMin}
+	}
+	if id <= stream.Latest {
+		return []resp.Value{errXAddStaleEntry}
+	}
+	stream.Latest = id
 	if _, ok := stream.Entries[id]; !ok {
 		stream.Entries[id] = make(map[resp.BulkString]resp.BulkString)
 	}
