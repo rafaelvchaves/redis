@@ -168,6 +168,19 @@ func Parse(array resp.Array) (Command, error) {
 			return nil, fmt.Errorf("expected 3 arguments")
 		}
 		return XRange{StreamKey: input[1], Start: input[2], End: input[3]}, nil
+	case "XREAD":
+		if len(input) < 4 {
+			return nil, fmt.Errorf("expected at least 2 arguments")
+		}
+		if strings.ToUpper(string(input[1])) != "STREAMS" {
+			return nil, fmt.Errorf("unknown option %s", input[1])
+		}
+		args := input[2:]
+		n := len(args)
+		if n%2 != 0 {
+			return nil, fmt.Errorf("incorrect number of key/value pairs")
+		}
+		return XRead{Keys: args[0 : n/2], Values: args[n/2 : n]}, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

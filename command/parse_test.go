@@ -154,6 +154,26 @@ func TestParseCommand(t *testing.T) {
 				End:       resp.BulkString("67890"),
 			},
 		},
+		"XREAD streams stream_key other_stream_key 0-0 0-1": {
+			input: resp.Array{
+				resp.BulkString("XREAD"),
+				resp.BulkString("streams"),
+				resp.BulkString("stream_key"),
+				resp.BulkString("other_stream_key"),
+				resp.BulkString("0-0"),
+				resp.BulkString("0-1"),
+			},
+			want: command.XRead{
+				Keys: []resp.BulkString{
+					resp.BulkString("stream_key"),
+					resp.BulkString("other_stream_key"),
+				},
+				Values: []resp.BulkString{
+					resp.BulkString("0-0"),
+					resp.BulkString("0-1"),
+				},
+			},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

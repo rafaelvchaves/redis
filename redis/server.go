@@ -215,6 +215,8 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 		return s.xAdd(ctx, req)
 	case command.XRange:
 		return s.xRange(ctx, req)
+	case command.XRead:
+		return s.xRead(ctx, req)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -439,7 +441,7 @@ func parseEntryID(id string, maxTime int64, maxSeq int64) (result resp.EntryID, 
 func (s *Server) xRange(_ context.Context, req command.XRange) []resp.Value {
 	entry, ok := s.cache.Get(req.StreamKey)
 	if !ok {
-		entry = CacheEntry{value: resp.Stream{}}
+		return []resp.Value{resp.Array{}}
 	}
 	stream, ok := entry.value.(resp.Stream)
 	if !ok {
@@ -505,7 +507,6 @@ func (s *Server) search(entries []resp.Entry, targetID resp.EntryID) int {
 	j := n - 1
 	for i <= j {
 		m := (i + j) / 2
-		fmt.Println(i, j, m)
 		switch {
 		case entries[m].ID == targetID:
 			return m
@@ -516,6 +517,45 @@ func (s *Server) search(entries []resp.Entry, targetID resp.EntryID) int {
 		}
 	}
 	return j + 1
+}
+
+func (s *Server) xRead(_ context.Context, req command.XRead) []resp.Value {
+	var result resp.Array
+	for i, key := range req.Keys {
+		entry, ok := s.cache.Get(key)
+		if !ok {
+			continue
+		}
+		stream, ok := entry.value.(resp.Stream)
+		if !ok {
+			return []resp.Value{errWrongType}
+		}
+		start, err := parseEndpont(string(req.Values[i]), 0)
+		if err != nil {
+			return []resp.Value{errInvalidStreamID}
+		}
+		// Search for start point.
+		i := s.search(stream.Entries, start)
+
+		// XREAD has an exclusive start bound.
+		if stream.Entries[i].ID == start {
+			i++
+		}
+		n := len(stream.Entries)
+		keyEntries := make(resp.Array, 0, n-i)
+		for i < n {
+			keyEntries = append(keyEntries, resp.Array{
+				resp.BulkString(stream.Entries[i].ID.String()),
+				stream.Entries[i].Values,
+			})
+			i++
+		}
+		result = append(result, resp.Array{
+			key,
+			keyEntries,
+		})
+	}
+	return []resp.Value{result}
 }
 
 func (s *Server) connectToMaster(ctx context.Context) {

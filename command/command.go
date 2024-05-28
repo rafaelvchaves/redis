@@ -128,3 +128,12 @@ type XRange struct {
 func (XRange) Details() Details {
 	return Details{}
 }
+
+type XRead struct {
+	Keys   []resp.BulkString
+	Values []resp.BulkString
+}
+
+func (XRead) Details() Details {
+	return Details{}
+}
