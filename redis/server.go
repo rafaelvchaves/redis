@@ -457,6 +457,12 @@ func (s *Server) xRange(_ context.Context, req command.XRange) []resp.Value {
 }
 
 func parseEndpont(endpoint string, defaultSeqNumber int64) (resp.EntryID, error) {
+	if endpoint == "-" {
+		return resp.EntryID{Time: 0, SequenceNumber: 0}, nil
+	}
+	if endpoint == "+" {
+		return resp.EntryID{Time: math.MaxInt64, SequenceNumber: math.MaxInt64}, nil
+	}
 	fields := strings.Split(string(endpoint), "-")
 	if len(fields) > 2 {
 		return resp.EntryID{}, fmt.Errorf("expected at most 2 fields, got %d", len(fields))
