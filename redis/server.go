@@ -14,6 +14,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/command"
 	"github.com/codecrafters-io/redis-starter-go/lib/cache"
 	"github.com/codecrafters-io/redis-starter-go/lib/ctxlog"
+	"github.com/codecrafters-io/redis-starter-go/lib/mpmc"
 	"github.com/codecrafters-io/redis-starter-go/lib/optional"
 	"github.com/codecrafters-io/redis-starter-go/resp"
 )
@@ -26,6 +27,7 @@ type Server struct {
 	config         Config
 	master         net.Conn
 	replicas       map[net.Addr]replica
+	streams        map[resp.BulkString]*mpmc.Queue[resp.Stream]
 	bytesProcessed int
 }
 
@@ -71,6 +73,7 @@ func NewServer(params ServerParams) *Server {
 		config:     params.Config,
 		cache:      cache.NewTypedSyncMap[resp.BulkString, CacheEntry](),
 		replicas:   make(map[net.Addr]replica),
+		streams:    make(map[resp.BulkString]*mpmc.Queue[resp.Stream]),
 	}
 }
 
@@ -216,7 +219,7 @@ func (s *Server) execute(ctx context.Context, cmd command.Command, conn net.Conn
 	case command.XRange:
 		return s.xRange(ctx, req)
 	case command.XRead:
-		return s.xRead(ctx, req)
+		return s.xRead(ctx, req, conn)
 	}
 	return []resp.Value{resp.SimpleError{Message: "unknown command"}}
 }
@@ -378,10 +381,10 @@ func (s *Server) typeOf(_ context.Context, req command.Type) []resp.Value {
 	}
 }
 
-func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
+func (s *Server) xAdd(ctx context.Context, req command.XAdd) []resp.Value {
 	entry, ok := s.cache.Get(req.StreamKey)
 	if !ok {
-		entry = CacheEntry{value: resp.Stream{}}
+		entry = CacheEntry{value: resp.Stream{Buffer: mpmc.NewQueue[resp.Entry]()}}
 	}
 	stream, ok := entry.value.(resp.Stream)
 	if !ok {
@@ -401,7 +404,10 @@ func (s *Server) xAdd(_ context.Context, req command.XAdd) []resp.Value {
 	if !lastID.Less(newID) {
 		return []resp.Value{errXAddStaleEntry}
 	}
-	stream.Entries = append(stream.Entries, resp.Entry{ID: newID, Values: req.Pairs})
+	newEntry := resp.Entry{StreamKey: req.StreamKey, ID: newID, Values: req.Pairs}
+	stream.Entries = append(stream.Entries, newEntry)
+	stream.Buffer.Broadcast(newEntry)
+	ctxlog.Infof(ctx, "broadcasting entry %v", newEntry)
 	s.cache.Put(req.StreamKey, CacheEntry{value: stream, ttl: entry.ttl})
 	return []resp.Value{resp.String(newID.String())}
 }
@@ -519,8 +525,18 @@ func (s *Server) search(entries []resp.Entry, targetID resp.EntryID) int {
 	return j + 1
 }
 
-func (s *Server) xRead(_ context.Context, req command.XRead) []resp.Value {
-	var result resp.Array
+func (s *Server) xRead(ctx context.Context, req command.XRead, conn net.Conn) []resp.Value {
+	timeout, block := req.Block.Get()
+	if block {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	entries := make(map[resp.BulkString]resp.Array)
+	entryChan := make(chan resp.Entry, 1)
+	defer func() { close(entryChan) }()
+
+	// Try to respond to the request synchronously (even if BLOCK is specified).
 	for i, key := range req.Keys {
 		entry, ok := s.cache.Get(key)
 		if !ok {
@@ -530,30 +546,58 @@ func (s *Server) xRead(_ context.Context, req command.XRead) []resp.Value {
 		if !ok {
 			return []resp.Value{errWrongType}
 		}
+		if block {
+			consumerID := conn.RemoteAddr().String()
+			stream.Buffer.AddConsumer(consumerID, entryChan)
+			defer stream.Buffer.RemoveConsumer(consumerID)
+		}
 		start, err := parseEndpont(string(req.Values[i]), 0)
 		if err != nil {
 			return []resp.Value{errInvalidStreamID}
 		}
 		// Search for start point.
 		i := s.search(stream.Entries, start)
+		n := len(stream.Entries)
+		if i >= n {
+			continue
+		}
 
 		// XREAD has an exclusive start bound.
 		if stream.Entries[i].ID == start {
 			i++
 		}
-		n := len(stream.Entries)
-		keyEntries := make(resp.Array, 0, n-i)
 		for i < n {
-			keyEntries = append(keyEntries, resp.Array{
-				resp.BulkString(stream.Entries[i].ID.String()),
+			entries[key] = append(entries[key], resp.Array{
+				stream.Entries[i].ID.BulkString(),
 				stream.Entries[i].Values,
 			})
 			i++
 		}
-		result = append(result, resp.Array{
-			key,
-			keyEntries,
-		})
+	}
+	if block && len(entries) == 0 {
+		var done bool
+		for !done {
+			select {
+			case entry := <-entryChan:
+				ctxlog.Infof(ctx, "received entry: %v", entry)
+				entries[entry.StreamKey] = append(
+					entries[entry.StreamKey],
+					resp.Array{
+						entry.ID.BulkString(),
+						entry.Values,
+					},
+				)
+			case <-ctx.Done():
+				done = true
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return []resp.Value{resp.NullBulkString{}}
+	}
+	var result resp.Array
+	for key, value := range entries {
+		result = append(result, resp.Array{key, value})
 	}
 	return []resp.Value{result}
 }

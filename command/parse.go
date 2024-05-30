@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -172,15 +173,36 @@ func Parse(array resp.Array) (Command, error) {
 		if len(input) < 4 {
 			return nil, fmt.Errorf("expected at least 2 arguments")
 		}
-		if strings.ToUpper(string(input[1])) != "STREAMS" {
-			return nil, fmt.Errorf("unknown option %s", input[1])
+		splitIndex := slices.IndexFunc(input, func(s resp.BulkString) bool {
+			return strings.ToUpper(string(s)) == "STREAMS"
+		})
+		if splitIndex == -1 {
+			return nil, fmt.Errorf("STREAMS option must be passed")
 		}
-		args := input[2:]
+		result := XRead{}
+		i := 1
+		for i < splitIndex {
+			if strings.ToUpper(string(input[i])) == "BLOCK" {
+				if i+1 >= splitIndex {
+					return nil, fmt.Errorf("duration must be specified after BLOCK")
+				}
+				millis, err := time.ParseDuration(string(input[i+1] + "ms"))
+				if err != nil {
+					return nil, err
+				}
+				result.Block = optional.Some(millis)
+				break
+			}
+			i++
+		}
+		args := input[splitIndex+1:]
 		n := len(args)
 		if n%2 != 0 {
 			return nil, fmt.Errorf("incorrect number of key/value pairs")
 		}
-		return XRead{Keys: args[0 : n/2], Values: args[n/2 : n]}, nil
+		result.Keys = args[0 : n/2]
+		result.Values = args[n/2 : n]
+		return result, nil
 	}
 	return nil, fmt.Errorf("unknown command %s", first)
 }

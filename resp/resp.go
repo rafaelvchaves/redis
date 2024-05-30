@@ -3,6 +3,8 @@ package resp
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/codecrafters-io/redis-starter-go/lib/mpmc"
 )
 
 type Value interface {
@@ -87,11 +89,13 @@ func (i Integer) Encode() []byte {
 
 type Stream struct {
 	Entries []Entry
+	Buffer  *mpmc.Queue[Entry]
 }
 
 type Entry struct {
-	ID     EntryID
-	Values Array
+	StreamKey BulkString
+	ID        EntryID
+	Values    Array
 }
 
 type EntryID struct {
@@ -105,6 +109,10 @@ func (i EntryID) Less(other EntryID) bool {
 
 func (i EntryID) String() string {
 	return fmt.Sprintf("%d-%d", i.Time, i.SequenceNumber)
+}
+
+func (i EntryID) BulkString() BulkString {
+	return BulkString(fmt.Sprintf("%d-%d", i.Time, i.SequenceNumber))
 }
 
 func (s Stream) Encode() []byte {

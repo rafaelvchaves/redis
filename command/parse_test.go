@@ -174,6 +174,29 @@ func TestParseCommand(t *testing.T) {
 				},
 			},
 		},
+		"XREAD BLOCK 1000 streams stream_key other_stream_key 0-0 0-1": {
+			input: resp.Array{
+				resp.BulkString("XREAD"),
+				resp.BulkString("BLOCK"),
+				resp.BulkString("1000"),
+				resp.BulkString("streams"),
+				resp.BulkString("stream_key"),
+				resp.BulkString("other_stream_key"),
+				resp.BulkString("0-0"),
+				resp.BulkString("0-1"),
+			},
+			want: command.XRead{
+				Block: optional.Some(time.Second),
+				Keys: []resp.BulkString{
+					resp.BulkString("stream_key"),
+					resp.BulkString("other_stream_key"),
+				},
+				Values: []resp.BulkString{
+					resp.BulkString("0-0"),
+					resp.BulkString("0-1"),
+				},
+			},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -201,6 +224,11 @@ var cmpOpts = []cmp.Option{
 		command.Type{},
 	),
 	compareOptions[time.Time](cmp.Comparer((time.Time).Equal)),
+	compareOptions[time.Duration](cmp.Comparer(
+		func(d1, d2 time.Duration) bool {
+			return d1 == d2
+		},
+	)),
 }
 
 func compareMaps[K comparable, V comparable]() cmp.Option {

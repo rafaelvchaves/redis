@@ -132,6 +132,7 @@ func (XRange) Details() Details {
 type XRead struct {
 	Keys   []resp.BulkString
 	Values []resp.BulkString
+	Block  optional.Value[time.Duration]
 }
 
 func (XRead) Details() Details {
