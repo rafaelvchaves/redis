@@ -527,7 +527,7 @@ func (s *Server) search(entries []resp.Entry, targetID resp.EntryID) int {
 
 func (s *Server) xRead(ctx context.Context, req command.XRead, conn net.Conn) []resp.Value {
 	timeout, block := req.Block.Get()
-	if block {
+	if block && timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -587,6 +587,10 @@ func (s *Server) xRead(ctx context.Context, req command.XRead, conn net.Conn) []
 						entry.Values,
 					},
 				)
+				if timeout == 0 {
+					// 0 timeout will finish on the first received entry.
+					done = true
+				}
 			case <-ctx.Done():
 				done = true
 			}
