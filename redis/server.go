@@ -600,8 +600,8 @@ func (s *Server) xRead(ctx context.Context, req command.XRead, conn net.Conn) []
 		return []resp.Value{resp.NullBulkString{}}
 	}
 	var result resp.Array
-	for key, value := range entries {
-		result = append(result, resp.Array{key, value})
+	for _, key := range req.Keys {
+		result = append(result, resp.Array{key, entries[key]})
 	}
 	return []resp.Value{result}
 }
