@@ -551,6 +551,11 @@ func (s *Server) xRead(ctx context.Context, req command.XRead, conn net.Conn) []
 			stream.Buffer.AddConsumer(consumerID, entryChan)
 			defer stream.Buffer.RemoveConsumer(consumerID)
 		}
+		if req.Values[i] == "$" {
+			// The $ character indicates that we should not look at old entries
+			// for this stream.
+			continue
+		}
 		start, err := parseEndpont(string(req.Values[i]), 0)
 		if err != nil {
 			return []resp.Value{errInvalidStreamID}
